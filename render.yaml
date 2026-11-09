@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: atrocity-gaming-lounge
+    runtime: node
+    buildCommand: npm install && npm --prefix backend install && npm run build
+    startCommand: npm --prefix backend start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: FRONTEND_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: KEEPALIVE_TOKEN
+        sync: false
+      - key: CASHFREE_APP_ID
+        sync: false
+      - key: CASHFREE_SECRET_KEY
+        sync: false
+      - key: CASHFREE_ENV
+        value: production
+      - key: CASHFREE_API_VERSION
+        value: 2023-08-01

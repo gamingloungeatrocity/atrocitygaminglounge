@@ -1,0 +1,21 @@
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: "17 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run three lightweight database operations
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          KEEPALIVE_TOKEN: ${{ secrets.KEEPALIVE_TOKEN }}
+        run: |
+          test -n "$BACKEND_URL"
+          test -n "$KEEPALIVE_TOKEN"
+          curl --fail-with-body --silent --show-error \
+            -H "x-keepalive-token: $KEEPALIVE_TOKEN" \
+            "$BACKEND_URL/api/keepalive"
