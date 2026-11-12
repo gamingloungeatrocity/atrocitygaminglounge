@@ -87,8 +87,6 @@ export function Footer() {
             title="Quick Links"
             links={[
               ...NAV_LINKS.map((l) => ({ label: l.label, href: `#${l.id}` })),
-              { label: "Staff Portal", href: "/staff", isRoute: true },
-              { label: "Admin Portal", href: "/admin", isRoute: true },
             ]}
           />
           <FooterNav title="Experiences" links={EXPERIENCES} />
