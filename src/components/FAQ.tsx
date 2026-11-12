@@ -35,7 +35,7 @@ function AccordionItem({ item, id, open, onToggle }: AccordionItemProps) {
           onClick={onToggle}
           className="flex w-full items-center justify-between gap-4 rounded-2xl px-5 py-4 text-left sm:px-6 sm:py-5"
         >
-          <span className="font-tech text-base font-bold leading-snug sm:text-lg">{item.q}</span>
+          <span className="min-w-0 break-words font-tech text-base font-bold leading-snug sm:text-lg">{item.q}</span>
           <span
             aria-hidden="true"
             className={cn(
@@ -55,7 +55,7 @@ function AccordionItem({ item, id, open, onToggle }: AccordionItemProps) {
         className={cn("grid transition-[grid-template-rows] duration-300 ease-out", open ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}
       >
         <div className="overflow-hidden">
-          <p className="px-5 pb-5 leading-relaxed text-white/65 sm:px-6 sm:pb-6">{item.a}</p>
+          <p className="break-words px-5 pb-5 leading-relaxed text-white/65 sm:px-6 sm:pb-6">{item.a}</p>
         </div>
       </div>
     </div>
@@ -64,7 +64,7 @@ function AccordionItem({ item, id, open, onToggle }: AccordionItemProps) {
 
 export function FAQ() {
   const [category, setCategory] = useState<FaqFilter>("All");
-  const [openIndex, setOpenIndex] = useState<number | null>(0);
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
 
   const tabs = useMemo(
     () =>
@@ -79,15 +79,16 @@ export function FAQ() {
 
   const changeCategory = (next: FaqFilter) => {
     setCategory(next);
-    setOpenIndex(0);
+    setOpenIndex(null);
   };
 
   return (
-    <section id="faq" aria-labelledby="faq-title" className="relative py-20 sm:py-28">
-      <div className="mx-auto grid max-w-7xl gap-12 px-4 sm:px-6 lg:grid-cols-[0.85fr_1.15fr] lg:gap-16 lg:px-8">
-        <div className="lg:sticky lg:top-28 lg:self-start">
+    <section id="faq" aria-labelledby="faq-title" className="relative min-w-0 py-20 sm:py-28">
+      <div className="mx-auto grid w-full min-w-0 max-w-7xl gap-12 px-4 sm:px-6 lg:grid-cols-[0.85fr_1.15fr] lg:gap-16 lg:px-8">
+        <div className="min-w-0 lg:sticky lg:top-28 lg:self-start">
           <Reveal>
             <SectionHeading
+              className="min-w-0"
               align="left"
               id="faq-title"
               eyebrow="FAQ"
@@ -100,13 +101,13 @@ export function FAQ() {
             />
           </Reveal>
           <Reveal className="mt-8">
-            <div className="hud rounded-2xl border border-white/10 bg-coal p-6">
+            <div className="hud min-w-0 rounded-2xl border border-white/10 bg-coal p-5 sm:p-6">
               <p className="font-display text-base font-black uppercase tracking-wide">Still need help?</p>
-              <p className="mt-2 text-sm text-white/60">
+              <p className="mt-2 break-words text-sm text-white/60">
                 Our team is available daily from 10:00 AM to 10:00 PM on {BUSINESS.phoneDisplay}.
               </p>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <Button size="sm" href={telHref}>
+              <div className="mt-5 flex max-w-full flex-wrap gap-3">
+                <Button size="sm" href={telHref} className="max-w-full">
                   <Phone /> Call us
                 </Button>
                 <Button
@@ -115,6 +116,7 @@ export function FAQ() {
                   href={whatsappHref("Hi Atrocity Gaming Lounge! I have a question.")}
                   target="_blank"
                   rel="noopener noreferrer"
+                  className="max-w-full"
                 >
                   <WhatsAppIcon /> WhatsApp
                 </Button>
@@ -123,9 +125,9 @@ export function FAQ() {
           </Reveal>
         </div>
 
-        <div>
-          <Reveal>
-            <Tabs items={tabs} value={category} onChange={changeCategory} label="FAQ categories" idPrefix="faq" size="sm" />
+        <div className="min-w-0">
+          <Reveal className="min-w-0">
+            <Tabs items={tabs} value={category} onChange={changeCategory} label="FAQ categories" idPrefix="faq" size="sm" className="min-w-0" />
           </Reveal>
           <div id="faq-panel" role="tabpanel" aria-labelledby={`faq-tab-${category}`} className="mt-6 space-y-3">
             {items.map((item, i) => (
