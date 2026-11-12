@@ -9,14 +9,12 @@ import { WhatsAppIcon } from "./ui/icons";
 /** Back-to-top button + a sticky mobile action bar (Call · WhatsApp · Book). */
 export function FloatingActions() {
   const { openBooking } = useBooking();
-  const [showBar, setShowBar] = useState(false);
   const [showTop, setShowTop] = useState(false);
 
   useEffect(() => {
     let ticking = false;
     const update = () => {
       const y = window.scrollY;
-      setShowBar(y > window.innerHeight * 0.75);
       setShowTop(y > 900);
       ticking = false;
     };
@@ -47,10 +45,8 @@ export function FloatingActions() {
       </button>
 
       <div
-        inert={!showBar}
         className={cn(
-          "fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-black/90 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl transition-transform duration-300 md:hidden",
-          showBar ? "translate-y-0" : "translate-y-full",
+          "fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-black/90 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl md:hidden",
         )}
       >
         <div className="grid grid-cols-[auto_auto_1fr] gap-2">

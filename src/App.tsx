@@ -5,6 +5,7 @@ import { BookingContext } from "@/context/booking";
 import { PublicDataProvider } from "@/context/publicData";
 import { useAppRoute } from "@/lib/router";
 import { ToastProvider } from "@/components/ui/Toast";
+import { SiteBackdrop } from "@/components/SiteBackdrop";
 import { Navbar } from "@/components/Navbar";
 import { Hero } from "@/components/Hero";
 import { Marquee } from "@/components/Marquee";
@@ -51,9 +52,11 @@ function PublicWebsite() {
           Skip to content
         </a>
 
+        <SiteBackdrop />
+
         <Navbar />
 
-        <main id="main" className="overflow-x-clip">
+        <main id="main" className="relative z-10 overflow-x-clip pb-20 md:pb-0">
           <Hero />
           <Marquee />
           <Consoles />

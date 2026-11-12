@@ -278,7 +278,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
     [ps4Row, ps4ProRow],
   );
 
-  const CONSOLE_OPTIONS: { id: ConsolePref; label: string; rate: string; disabled: boolean }[] = [
+  const consoleOptions: { id: ConsolePref; label: string; rate: string; disabled: boolean }[] = [
     {
       id: "PS4",
       label: "PS4",
@@ -291,7 +291,10 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
       rate: ps4ProRow?.status === "maintenance" || ps4ProRow?.status === "disabled" ? ps4ProRow.status : `₹${ps4ProHourly}/hr`,
       disabled: ps4ProRow?.status === "maintenance" || ps4ProRow?.status === "disabled",
     },
-  ].filter((option) => !option.disabled || availableConsoleIds.length === 0);
+  ];
+  const CONSOLE_OPTIONS = consoleOptions.filter(
+    (option) => !option.disabled || availableConsoleIds.length === 0,
+  );
 
   useEffect(() => {
     if (availableConsoleIds.length && !availableConsoleIds.includes(form.consolePref as "PS4" | "PS4 Pro")) {

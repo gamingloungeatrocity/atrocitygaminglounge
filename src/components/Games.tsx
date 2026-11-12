@@ -10,6 +10,11 @@ import { SectionHeading } from "./ui/SectionHeading";
 import { Tabs } from "./ui/Tabs";
 import { WhatsAppIcon } from "./ui/icons";
 
+const GAME_GENRE_TAGS = ["Open World", "Sports", "Fighting", "Multiplayer"] as const;
+
+/** Keeps only the genre tags the "Game" type allows, dropping "All" and unknown values. */
+const toGameGenres = (genres: string[]): Game["genres"] => GAME_GENRE_TAGS.filter((tag) => genres.includes(tag));
+
 const matches = (game: Game, filter: GameFilter) => filter === "All" || (game.genres as GameFilter[]).includes(filter);
 
 function GameCard({ game, index }: { game: Game & { image: string }; index: number }) {
@@ -76,7 +81,7 @@ export function Games() {
   const gamesData: (Game & { image: string })[] = records.map((game) => ({
     ...game,
     image: game.cover_image_url || GAMES.find((fallback) => fallback.title === game.title)?.image || "",
-    genres: game.genres as GameFilter[],
+    genres: toGameGenres(game.genres),
   }));
   const gamesSource = gamesData;
   const tabs = useMemo(

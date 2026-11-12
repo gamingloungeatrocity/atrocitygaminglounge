@@ -101,7 +101,7 @@ export function Navbar() {
           </ul>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Hidden on phones so the longer "Gaming Lounge" wordmark fits; the sticky bar + menu keep booking one tap away. */}
+            {/* Hidden on phones; the mobile sticky bar and menu keep booking one tap away. */}
             <Button size="sm" onClick={book} className="hidden px-3.5 sm:inline-flex sm:h-10 sm:px-5">
               <Gamepad2 className="hidden sm:block" />
               Book Now

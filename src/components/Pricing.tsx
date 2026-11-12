@@ -5,8 +5,8 @@ import { useBooking } from "@/context/booking";
 import { usePublicData } from "@/context/publicData";
 import { cn } from "@/utils/cn";
 import { Button } from "./ui/Button";
+import { PriceCounter } from "./ui/PriceCounter";
 import { Reveal } from "./ui/Reveal";
-import { Rupee } from "./ui/Rupee";
 import { SectionHeading } from "./ui/SectionHeading";
 import { Tabs, type TabItem } from "./ui/Tabs";
 
@@ -65,8 +65,7 @@ function PlanCard({ plan, consoleTab }: { plan: PricingPlan; consoleTab: Console
       {/* Main price */}
       <div className="mt-6 flex items-end gap-2">
         <span className="font-display text-5xl font-black leading-none tracking-tight">
-          <Rupee className="text-[0.8em]" />
-          {activePrice}
+          <PriceCounter value={activePrice} rupeeClassName="text-[0.8em]" />
         </span>
         <span className="pb-1 font-tech text-base font-semibold text-white/55">{plan.unit}</span>
       </div>
@@ -211,7 +210,11 @@ export function Pricing() {
               <div>
                 <p className="font-tech text-xs font-bold uppercase tracking-[0.3em] text-blood-400">Group Events</p>
                 <h3 className="mt-1 font-display text-lg font-black uppercase sm:text-2xl">
-                  Book the whole venue — <span className="text-blood text-glow-sm"><Rupee />{Number(wholeLoungePrice)}</span> flat
+                  Book the whole venue —{" "}
+                  <span className="text-blood text-glow-sm">
+                    <PriceCounter value={Number(wholeLoungePrice)} />
+                  </span>{" "}
+                  flat
                 </h3>
                 <p className="mt-1 text-sm text-white/60">Both PS4 &amp; PS4 Pro stations exclusively for your crew.</p>
               </div>

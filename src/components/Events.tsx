@@ -10,8 +10,8 @@ import { usePublicData } from "@/context/publicData";
 import type { TournamentRecord } from "@/lib/api";
 import { telHref } from "@/lib/contact";
 import { Button } from "./ui/Button";
+import { PriceCounter } from "./ui/PriceCounter";
 import { Reveal } from "./ui/Reveal";
-import { Rupee } from "./ui/Rupee";
 import { SectionHeading } from "./ui/SectionHeading";
 import { Tabs } from "./ui/Tabs";
 
@@ -51,8 +51,7 @@ function GroupPanel() {
           </p>
           <div className="mt-6 flex items-end gap-3">
             <span className="font-display text-5xl font-black leading-none">
-              <Rupee className="text-[0.8em]" />
-              {Number(wholeLoungePrice)}
+              <PriceCounter value={Number(wholeLoungePrice)} rupeeClassName="text-[0.8em]" />
             </span>
             <span className="pb-1 font-tech text-sm font-bold uppercase tracking-[0.2em] text-white/60">Whole Lounge</span>
           </div>
@@ -213,7 +212,6 @@ function TournamentPanel() {
 }
 
 export function Events() {
-  const { tournaments } = usePublicData();
   const [tab, setTab] = useState<EventTab>("group");
 
   return (
