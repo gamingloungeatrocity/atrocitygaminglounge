@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import { ChevronRight, Clock, Gamepad2, Menu, Phone, X } from "lucide-react";
 import { BUSINESS, NAV_LINKS, SPY_IDS } from "@/data/site";
 import { useBooking } from "@/context/booking";
@@ -8,11 +8,14 @@ import { cn } from "@/utils/cn";
 import { Button } from "./ui/Button";
 import { Logo } from "./ui/Logo";
 import { OpenStatus } from "./ui/OpenStatus";
+import { useManagedOverlay } from "@/context/backNavigation";
 
 export function Navbar() {
   const { openBooking } = useBooking();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  const dismissMenu = useManagedOverlay(menuOpen, closeMenu);
   const spy = useScrollSpy(SPY_IDS);
   const active = spy === "consoles" ? "home" : spy;
 
@@ -29,10 +32,10 @@ export function Navbar() {
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenuOpen(false);
+      if (e.key === "Escape") dismissMenu();
     };
     const onResize = () => {
-      if (window.innerWidth >= 1280) setMenuOpen(false);
+      if (window.innerWidth >= 1280) dismissMenu();
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("resize", onResize);
@@ -41,16 +44,19 @@ export function Navbar() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", onResize);
     };
-  }, [menuOpen]);
+  }, [dismissMenu, menuOpen]);
 
   const navigate = (id: string) => (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
-    setMenuOpen(false);
+    dismissMenu();
     requestAnimationFrame(() => scrollToId(id));
   };
 
   const book = () => {
-    setMenuOpen(false);
+    if (menuOpen) {
+      dismissMenu(() => openBooking());
+      return;
+    }
     openBooking();
   };
 
@@ -108,7 +114,7 @@ export function Navbar() {
             </Button>
             <button
               type="button"
-              onClick={() => setMenuOpen((v) => !v)}
+              onClick={() => (menuOpen ? dismissMenu() : setMenuOpen(true))}
               aria-expanded={menuOpen}
               aria-controls="mobile-menu"
               aria-label={menuOpen ? "Close menu" : "Open menu"}
@@ -131,7 +137,7 @@ export function Navbar() {
       >
         <div
           aria-hidden="true"
-          onClick={() => setMenuOpen(false)}
+          onClick={() => dismissMenu()}
           className={cn(
             "absolute inset-0 bg-black/70 backdrop-blur-sm transition-opacity duration-300",
             menuOpen ? "opacity-100" : "opacity-0",

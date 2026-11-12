@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import logoImg from "@/assets/raw/logo.png";
 import { cn } from "@/utils/cn";
+import { useManagedOverlay } from "@/context/backNavigation";
 
 interface ModalProps {
   open: boolean;
@@ -21,6 +22,7 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children }:
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const titleId = useId();
+  const dismiss = useManagedOverlay(open, onClose);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -39,7 +41,7 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children }:
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onCloseRef.current();
+        dismiss();
         return;
       }
       if (e.key !== "Tab" || !panelRef.current) return;
@@ -75,7 +77,7 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children }:
       body.style.paddingRight = prevPadding;
       previouslyFocused?.focus({ preventScroll: true });
     };
-  }, [open]);
+  }, [dismiss, open]);
 
   if (!open) return null;
 
@@ -83,7 +85,7 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children }:
     <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-6">
       <div
         aria-hidden="true"
-        onClick={() => onCloseRef.current()}
+        onClick={() => dismiss()}
         className="absolute inset-0 animate-fade-in bg-black/80 backdrop-blur-sm"
       />
       <div
@@ -111,7 +113,7 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children }:
           </div>
           <button
             type="button"
-            onClick={() => onCloseRef.current()}
+            onClick={() => dismiss()}
             aria-label="Close dialog"
             className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/10 text-white/70 transition-all duration-300 hover:rotate-90 hover:border-blood hover:text-white"
           >

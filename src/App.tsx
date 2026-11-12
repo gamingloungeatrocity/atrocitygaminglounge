@@ -22,6 +22,7 @@ import { BookingModal } from "@/components/BookingModal";
 import { AvailabilityModal } from "@/components/AvailabilityModal";
 import { AdminPortal } from "@/pages/admin/AdminPortal";
 import { StaffPortal } from "@/pages/staff/StaffPortal";
+import { BackNavigationProvider } from "@/context/backNavigation";
 
 function PublicWebsite() {
   const [booking, setBooking] = useState<{ open: boolean; prefill: BookingPrefill }>({ open: false, prefill: {} });
@@ -77,10 +78,12 @@ export default function App() {
   const { route } = useAppRoute();
 
   return (
-    <ToastProvider>
-      <AuthProvider>
-        {route === "admin" ? <AdminPortal /> : route === "staff" ? <StaffPortal /> : <PublicWebsite />}
-      </AuthProvider>
-    </ToastProvider>
+    <BackNavigationProvider>
+      <ToastProvider>
+        <AuthProvider>
+          {route === "admin" ? <AdminPortal /> : route === "staff" ? <StaffPortal /> : <PublicWebsite />}
+        </AuthProvider>
+      </ToastProvider>
+    </BackNavigationProvider>
   );
 }
