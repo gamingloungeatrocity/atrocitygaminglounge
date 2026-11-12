@@ -127,7 +127,7 @@ export function Hero() {
           </p>
 
           <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-            <Button size="lg" onClick={() => openBooking()}>
+            <Button id="hero-book-now" size="lg" onClick={() => openBooking()} starBorder>
               <Gamepad2 /> Book Now
             </Button>
             <Button size="lg" variant="outline" onClick={openAvailability}>

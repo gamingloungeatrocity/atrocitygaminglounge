@@ -102,8 +102,8 @@ export function Navbar() {
 
           <div className="flex items-center gap-2 sm:gap-3">
             {/* Hidden on phones; the mobile sticky bar and menu keep booking one tap away. */}
-            <Button size="sm" onClick={book} className="hidden px-3.5 sm:inline-flex sm:h-10 sm:px-5">
-              <Gamepad2 className="hidden sm:block" />
+            <Button size="sm" onClick={book} className="hidden px-3.5 sm:inline-flex sm:h-10 sm:px-5" starBorder>
+              <Gamepad2 className="hidden sm:block"  />
               Book Now
             </Button>
             <button
@@ -176,7 +176,7 @@ export function Navbar() {
             })}
           </ul>
           <div className="mt-6 grid grid-cols-2 gap-3">
-            <Button onClick={book}>
+            <Button onClick={book} starBorder>
               <Gamepad2 /> Book Now
             </Button>
             <Button variant="outline" href={telHref}>

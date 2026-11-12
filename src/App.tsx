@@ -45,12 +45,7 @@ function PublicWebsite() {
   return (
     <PublicDataProvider>
       <BookingContext.Provider value={ctx}>
-        <a
-          href="#main"
-          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[200] focus:rounded-lg focus:bg-blood focus:px-4 focus:py-2 focus:font-tech focus:font-bold focus:uppercase focus:tracking-widest"
-        >
-          Skip to content
-        </a>
+        
 
         <SiteBackdrop />
 
