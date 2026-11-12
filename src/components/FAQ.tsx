@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Phone, Plus } from "lucide-react";
 import { BUSINESS, FAQS, FAQ_CATEGORIES, type FaqFilter, type FaqItem } from "@/data/site";
 import { telHref, whatsappHref } from "@/lib/contact";
@@ -8,6 +8,7 @@ import { Reveal } from "./ui/Reveal";
 import { SectionHeading } from "./ui/SectionHeading";
 import { Tabs } from "./ui/Tabs";
 import { WhatsAppIcon } from "./ui/icons";
+import { usePointerDownOutside } from "@/hooks/usePointerDownOutside";
 
 interface AccordionItemProps {
   item: FaqItem;
@@ -65,6 +66,8 @@ function AccordionItem({ item, id, open, onToggle }: AccordionItemProps) {
 export function FAQ() {
   const [category, setCategory] = useState<FaqFilter>("All");
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const openItemRef = useRef<HTMLDivElement>(null);
+  usePointerDownOutside(openItemRef, openIndex !== null, () => setOpenIndex(null));
 
   const tabs = useMemo(
     () =>
@@ -131,12 +134,17 @@ export function FAQ() {
           </Reveal>
           <div id="faq-panel" role="tabpanel" aria-labelledby={`faq-tab-${category}`} className="mt-6 space-y-3">
             {items.map((item, i) => (
-              <div key={`${category}-${item.q}`} className="animate-fade-up" style={{ animationDelay: `${i * 40}ms` }}>
+              <div
+                key={`${category}-${item.q}`}
+                ref={openIndex === i ? openItemRef : undefined}
+                className="animate-fade-up"
+                style={{ animationDelay: `${i * 40}ms` }}
+              >
                 <AccordionItem
                   item={item}
                   id={`faq-${category}-${i}`.replace(/\s+/g, "")}
                   open={openIndex === i}
-                  onToggle={() => setOpenIndex(openIndex === i ? null : i)}
+                  onToggle={() => setOpenIndex((current) => (current === i ? null : i))}
                 />
               </div>
             ))}

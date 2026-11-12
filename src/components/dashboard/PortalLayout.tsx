@@ -1,9 +1,11 @@
-import { useState, type ComponentType, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { ArrowLeft, ExternalLink, LogOut, Menu, Shield, UserCheck, X } from "lucide-react";
 import { Logo } from "@/components/ui/Logo";
 import { useAuth } from "@/context/auth";
 import { navigate } from "@/lib/router";
 import { cn } from "@/utils/cn";
+import { useManagedOverlay } from "@/context/backNavigation";
+import { usePointerDownOutside } from "@/hooks/usePointerDownOutside";
 
 export interface SidebarNavItem<T extends string> {
   id: T;
@@ -33,10 +35,14 @@ export function PortalLayout<T extends string>({
 }: PortalLayoutProps<T>) {
   const { profile, logout } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerRef = useRef<HTMLElement>(null);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const dismissDrawer = useManagedOverlay(drawerOpen, closeDrawer);
+  usePointerDownOutside(drawerRef, drawerOpen, dismissDrawer);
 
   const handleSelect = (id: T) => {
     onSelectTab(id);
-    setDrawerOpen(false);
+    dismissDrawer();
   };
 
   const handleLogout = async () => {
@@ -58,7 +64,7 @@ export function PortalLayout<T extends string>({
         </a>
         <button
           type="button"
-          onClick={() => setDrawerOpen(false)}
+          onClick={() => dismissDrawer()}
           aria-label="Close sidebar"
           className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 text-white/70 lg:hidden"
         >
@@ -165,10 +171,9 @@ export function PortalLayout<T extends string>({
         <div className="fixed inset-0 z-[120] flex lg:hidden">
           <div
             aria-hidden="true"
-            onClick={() => setDrawerOpen(false)}
             className="fixed inset-0 bg-black/75 backdrop-blur-sm"
           />
-          <aside className="relative z-10 w-72 max-w-[85vw] border-r border-white/10 shadow-2xl">{SidebarContent}</aside>
+          <aside ref={drawerRef} className="relative z-10 w-72 max-w-[85vw] border-r border-white/10 shadow-2xl">{SidebarContent}</aside>
         </div>
       )}
 

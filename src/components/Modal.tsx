@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import logoImg from "@/assets/raw/logo.png";
 import { cn } from "@/utils/cn";
 import { useManagedOverlay } from "@/context/backNavigation";
+import { usePointerDownOutside } from "@/hooks/usePointerDownOutside";
 
 interface ModalProps {
   open: boolean;
@@ -23,6 +24,7 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children }:
   const onCloseRef = useRef(onClose);
   const titleId = useId();
   const dismiss = useManagedOverlay(open, onClose);
+  usePointerDownOutside(panelRef, open, dismiss);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -39,11 +41,6 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children }:
     if (scrollbar > 0) body.style.paddingRight = `${scrollbar}px`;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        dismiss();
-        return;
-      }
       if (e.key !== "Tab" || !panelRef.current) return;
       const items = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
         (el) => el.offsetParent !== null,
@@ -85,7 +82,6 @@ export function Modal({ open, onClose, title, subtitle, size = "md", children }:
     <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-6">
       <div
         aria-hidden="true"
-        onClick={() => dismiss()}
         className="absolute inset-0 animate-fade-in bg-black/80 backdrop-blur-sm"
       />
       <div

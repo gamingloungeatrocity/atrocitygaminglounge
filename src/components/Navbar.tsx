@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { ChevronRight, Clock, Gamepad2, Menu, Phone, X } from "lucide-react";
 import { BUSINESS, NAV_LINKS, SPY_IDS } from "@/data/site";
 import { useBooking } from "@/context/booking";
@@ -9,13 +9,18 @@ import { Button } from "./ui/Button";
 import { Logo } from "./ui/Logo";
 import { OpenStatus } from "./ui/OpenStatus";
 import { useManagedOverlay } from "@/context/backNavigation";
+import { usePointerDownOutside } from "@/hooks/usePointerDownOutside";
 
 export function Navbar() {
   const { openBooking } = useBooking();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+  const menuRef = useRef<HTMLElement>(null);
+  const menuSurfaceRefs = useMemo(() => [headerRef, menuRef], []);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   const dismissMenu = useManagedOverlay(menuOpen, closeMenu);
+  usePointerDownOutside(menuSurfaceRefs, menuOpen, dismissMenu);
   const spy = useScrollSpy(SPY_IDS);
   const active = spy === "consoles" ? "home" : spy;
 
@@ -26,22 +31,17 @@ export function Navbar() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Mobile menu: lock scroll, close on Escape / desktop resize
+  // Mobile menu: lock scroll and close when switching to the desktop layout.
   useEffect(() => {
     if (!menuOpen) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") dismissMenu();
-    };
     const onResize = () => {
       if (window.innerWidth >= 1280) dismissMenu();
     };
-    window.addEventListener("keydown", onKey);
     window.addEventListener("resize", onResize);
     return () => {
       document.body.style.overflow = prevOverflow;
-      window.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", onResize);
     };
   }, [dismissMenu, menuOpen]);
@@ -63,6 +63,7 @@ export function Navbar() {
   return (
     <>
       <header
+        ref={headerRef}
         className={cn(
           "fixed inset-x-0 top-0 z-50 border-b transition-[background-color,border-color,box-shadow] duration-300",
           scrolled || menuOpen
@@ -137,13 +138,13 @@ export function Navbar() {
       >
         <div
           aria-hidden="true"
-          onClick={() => dismissMenu()}
           className={cn(
             "absolute inset-0 bg-black/70 backdrop-blur-sm transition-opacity duration-300",
             menuOpen ? "opacity-100" : "opacity-0",
           )}
         />
         <nav
+          ref={menuRef}
           aria-label="Mobile"
           className={cn(
             "relative max-h-full overflow-y-auto border-b border-white/10 bg-black/95 px-4 pb-8 pt-2 shadow-2xl transition-all duration-300 sm:px-6",
