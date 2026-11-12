@@ -6,6 +6,8 @@ import { requireRole, requireStaffPermission } from "../src/middleware/authorize
 import { createApp } from "../src/server.js";
 import { intervalsOverlap, parsePgRangeMs } from "../src/services/availability.service.js";
 import { verifyCashfreeWebhookSignature } from "../src/services/payment.service.js";
+import { pricingService } from "../src/services/pricing.service.js";
+import { pricingRepository } from "../src/repositories/pricing.repository.js";
 import { mapDatabaseError } from "../src/utils/errors.js";
 
 function mockRes() {
@@ -135,6 +137,38 @@ describe("Booking Conflict Prevention & Range Math", () => {
     const overlapStart = Date.parse("2026-11-10T13:00:00Z");
     const overlapEnd = Date.parse("2026-11-10T14:00:00Z");
     assert.equal(intervalsOverlap(overlapStart, overlapEnd, range.start, range.end), true);
+  });
+});
+
+describe("Fixed Booking Package Validation", () => {
+  it("uses the configured 1-hour, 3-hour, and 5-hour package values and rejects a tampered duration", async () => {
+    const packages = [
+      { id: "package-1h", category: "ps4", duration_minutes: 60, bonus_minutes: 0, price: 70, is_active: true, label: "1 Hour" },
+      { id: "package-3h", category: "ps4", duration_minutes: 180, bonus_minutes: 15, price: 200, is_active: true, label: "3 Hours Package" },
+      { id: "package-5h", category: "ps4", duration_minutes: 300, bonus_minutes: 30, price: 350, is_active: true, label: "5 Hours Day Pass" },
+    ];
+    const originalFindById = pricingRepository.findById;
+    pricingRepository.findById = async (id) => packages.find((entry) => entry.id === id) || null;
+
+    try {
+      for (const selected of packages) {
+        const resolved = await pricingService.resolveBookingPackage({
+          pricingId: selected.id,
+          category: selected.category,
+          durationMinutes: selected.duration_minutes,
+        });
+        assert.equal(resolved.durationMinutes, selected.duration_minutes);
+        assert.equal(resolved.price, selected.price);
+        assert.equal(resolved.bonusMinutes, selected.bonus_minutes);
+      }
+
+      await assert.rejects(
+        pricingService.resolveBookingPackage({ pricingId: "package-1h", category: "ps4", durationMinutes: 180 }),
+        (error) => error.code === "PACKAGE_DURATION_MISMATCH",
+      );
+    } finally {
+      pricingRepository.findById = originalFindById;
+    }
   });
 });
 

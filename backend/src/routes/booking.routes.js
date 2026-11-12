@@ -25,6 +25,7 @@ const createBookingSchema = z
     booking_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD."),
     start_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Start time must be HH:MM."),
     duration: z.number().int().min(30).max(720),
+    pricing_id: z.string().uuid("A valid package selection is required."),
     game_title: z.string().max(120).optional().nullable(),
     players: z.number().int().min(1).max(8).optional(),
     notes: z.string().max(400).optional().nullable(),

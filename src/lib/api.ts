@@ -376,6 +376,7 @@ export const api = {
       booking_date: string;
       start_time: string;
       duration: number;
+      pricing_id: string;
       game_title?: string | null;
       players?: number;
       notes?: string | null;

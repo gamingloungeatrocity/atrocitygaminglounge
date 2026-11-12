@@ -50,7 +50,18 @@ const LABEL = "block font-tech text-xs font-bold uppercase tracking-[0.2em] text
 const LEGEND = "flex items-center gap-2.5 font-display text-sm font-black uppercase tracking-wider";
 
 function sessionMinutes(service: ServiceId, hours: number): number {
-  return service === "hourly" ? hours * 60 : getService(service).durationMins || 60;
+  const selected = getService(service);
+  // Console services are fixed packages. Their configured duration, rather
+  // than mutable form state, is the single source of truth for a booking.
+  return selected.kind === "console" ? selected.durationMins : selected.durationMins || hours * 60;
+}
+
+function formatDuration(durationMinutes: number): string {
+  if (durationMinutes % 60 === 0) {
+    const hours = durationMinutes / 60;
+    return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+  }
+  return `${durationMinutes} minutes`;
 }
 
 function openSlotsFor(date: string, service: ServiceId, hours: number) {
@@ -71,14 +82,13 @@ function getRateFromPricing(pricing: PricingRecord[], category: "ps4" | "ps4pro"
 
 function estimateFor(
   service: ServiceId,
-  hours: number,
   consolePref: ConsolePref,
   pricing: PricingRecord[],
   tournaments: TournamentRecord[],
   selectedTournamentId: string,
 ): number | null {
   const cat = consolePref === "PS4 Pro" ? "ps4pro" : "ps4";
-  if (service === "hourly") return getRateFromPricing(pricing, cat, hours * 60, hours * (cat === "ps4pro" ? 90 : 70));
+  if (service === "hourly") return getRateFromPricing(pricing, cat, getService(service).durationMins, cat === "ps4pro" ? 90 : 70);
   if (service === "pack3") return getRateFromPricing(pricing, cat, 180, cat === "ps4pro" ? 230 : 200);
   if (service === "daypass") return getRateFromPricing(pricing, cat, 300, cat === "ps4pro" ? 380 : 350);
   if (service === "group") return getRateFromPricing(pricing, "whole_lounge", 180, 2500);
@@ -119,7 +129,7 @@ function createInitialState(prefill: BookingPrefill, tournaments: TournamentReco
   return {
     service,
     consolePref: prefill.consolePref ?? "PS4",
-    hours: 1,
+    hours: Math.max(1, getService(service).durationMins / 60),
     date,
     time,
     players: 1,
@@ -137,7 +147,7 @@ function summaryRows(form: FormState, tournaments: TournamentRecord[]): [string,
   const svc = getService(form.service);
   const rows: [string, string][] = [["Experience", svc.name]];
   if (svc.kind === "console") rows.push(["Console", form.consolePref]);
-  if (form.service === "hourly") rows.push(["Duration", `${form.hours} hour${form.hours > 1 ? "s" : ""}`]);
+  if (svc.kind === "console") rows.push(["Duration", formatDuration(svc.durationMins)]);
   if (svc.kind !== "tournament") {
     rows.push(["Date", form.date ? formatYmd(form.date, "short") : "—"]);
     rows.push(["Time", form.time ? valueToLabel(form.time) : "—"]);
@@ -309,12 +319,25 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
     () => (needsSchedule ? openSlotsFor(form.date, form.service, form.hours) : []),
     [needsSchedule, form.date, form.service, form.hours],
   );
-  const estimate = estimateFor(form.service, form.hours, form.consolePref, pricing, tournaments, form.tournament);
+  const estimate = estimateFor(form.service, form.consolePref, pricing, tournaments, form.tournament);
+  const pricingCategory = form.consolePref === "PS4 Pro" ? "ps4pro" : "ps4";
+  const selectedPricing = isConsole
+    ? pricing.find(
+        (entry) =>
+          entry.category === pricingCategory &&
+          entry.duration_minutes === service.durationMins &&
+          entry.is_active,
+      )
+    : undefined;
   const rows = summaryRows(form, tournaments);
 
   const update = (patch: Partial<FormState>) => {
     setForm((prev) => {
       const next = { ...prev, ...patch };
+      const selectedService = getService(next.service);
+      if (selectedService.kind === "console") {
+        next.hours = Math.max(1, selectedService.durationMins / 60);
+      }
       if (getService(next.service).kind !== "tournament") {
         const open = openSlotsFor(next.date, next.service, next.hours);
         if (!open.some((s) => s.value === next.time)) next.time = open[0]?.value ?? "";
@@ -343,10 +366,13 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
     }
     if (form.name.trim().length < 2) next.name = "Please enter your name.";
     if (!phone) next.phone = "Enter a valid 10-digit Indian mobile number.";
+    if (backendConnected && isConsole && !selectedPricing) {
+      next.server = "This package is no longer available. Please choose another package or try again shortly.";
+    }
     setErrors(next);
 
     const firstInvalid = (["date", "time", "name", "phone"] as const).find((key) => next[key]);
-    if (firstInvalid || !phone) {
+    if (firstInvalid || next.server || !phone) {
       if (firstInvalid) document.getElementById(`bk-${firstInvalid}`)?.focus();
       return;
     }
@@ -370,6 +396,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
             booking_date: form.date,
             start_time: form.time,
             duration: sessionMinutes(form.service, form.hours),
+            pricing_id: selectedPricing?.id ?? "",
             game_title: form.game || null,
             players: form.players,
             notes: form.notes.trim() || null,
@@ -682,16 +709,14 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
               </>
             )}
 
-            {form.service === "hourly" && (
-              <StepperField
-                id="bk-hours"
-                label="Hours"
-                value={form.hours}
-                min={1}
-                max={8}
-                suffix={form.hours === 1 ? "hr" : "hrs"}
-                onChange={(v) => update({ hours: v })}
-              />
+            {isConsole && (
+              <div>
+                <span className={LABEL}>Package duration</span>
+                <output className="mt-2 flex h-12 items-center rounded-xl border border-white/10 bg-black/45 px-4 font-display text-base font-bold">
+                  {formatDuration(service.durationMins)}
+                  <span className="ml-2 font-tech text-xs font-semibold uppercase tracking-wide text-white/45">Fixed package</span>
+                </output>
+              </div>
             )}
             {isConsole && (
               <StepperField id="bk-players" label="Players" value={form.players} min={1} max={4} onChange={(v) => update({ players: v })} />

@@ -55,6 +55,30 @@ export const pricingService = {
     };
   },
 
+  /**
+   * Resolves a public booking package from its database record. Both the
+   * duration and amount are validated against that record so neither can be
+   * altered by a browser or API client.
+   */
+  async resolveBookingPackage({ pricingId, category, durationMinutes }) {
+    const selected = await pricingRepository.findById(pricingId);
+    if (!selected || !selected.is_active || selected.category !== category) {
+      throw new ApiError(400, "INVALID_PACKAGE", "The selected booking package is no longer available for this console.");
+    }
+
+    if (Number(selected.duration_minutes) !== durationMinutes) {
+      throw new ApiError(400, "PACKAGE_DURATION_MISMATCH", "The booking duration must match the selected package.");
+    }
+
+    return {
+      price: Number(selected.price),
+      bonusMinutes: Number(selected.bonus_minutes || 0),
+      pricingId: selected.id,
+      label: selected.label,
+      durationMinutes: Number(selected.duration_minutes),
+    };
+  },
+
   async upsertPricing(payload, actor, ipAddress) {
     const saved = await pricingRepository.upsert(payload);
     await recordAuditLog({
