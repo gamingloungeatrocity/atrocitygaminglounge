@@ -120,12 +120,15 @@ export function createApp() {
   // 404 for unknown API routes
   app.use("/api", notFoundHandler);
 
-  // Serve built frontend SPA for /, /admin, /staff if dist exists
+  // Serve the SPA shell for browser routes (including unknown routes, which
+  // the client renders with its 404 page).  Do not return HTML for a missing
+  // static file: requests with an extension fall through to the normal 404.
   const distDir = path.resolve(__dirname, "../../dist");
   const distIndex = path.join(distDir, "index.html");
   if (fs.existsSync(distIndex)) {
     app.use(express.static(distDir));
-    app.get(["/", "/admin", "/staff", /^\/admin\/.*/, /^\/staff\/.*/], (_req, res) => {
+    app.get(/.*/, (req, res, next) => {
+      if (path.extname(req.path)) return next();
       res.sendFile(distIndex);
     });
   }

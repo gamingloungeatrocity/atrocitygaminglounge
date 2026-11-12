@@ -10,6 +10,9 @@ const __dirname = path.dirname(__filename);
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Keep emitted asset URLs rooted at the site origin so an imported image
+  // resolves identically when the SPA is loaded from a deep link.
+  base: "/",
   plugins: [react(), tailwindcss(), viteSingleFile()],
   resolve: {
     alias: {
