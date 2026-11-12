@@ -23,6 +23,7 @@ import { AvailabilityModal } from "@/components/AvailabilityModal";
 import { AdminPortal } from "@/pages/admin/AdminPortal";
 import { StaffPortal } from "@/pages/staff/StaffPortal";
 import { BackNavigationProvider } from "@/context/backNavigation";
+import { AppErrorBoundary, ErrorPage } from "@/components/ErrorPage";
 
 function PublicWebsite() {
   const [booking, setBooking] = useState<{ open: boolean; prefill: BookingPrefill }>({ open: false, prefill: {} });
@@ -78,12 +79,14 @@ export default function App() {
   const { route } = useAppRoute();
 
   return (
-    <BackNavigationProvider>
-      <ToastProvider>
-        <AuthProvider>
-          {route === "admin" ? <AdminPortal /> : route === "staff" ? <StaffPortal /> : <PublicWebsite />}
-        </AuthProvider>
-      </ToastProvider>
-    </BackNavigationProvider>
+    <AppErrorBoundary>
+      <BackNavigationProvider>
+        <ToastProvider>
+          <AuthProvider>
+            {route === "admin" ? <AdminPortal /> : route === "staff" ? <StaffPortal /> : route === "not-found" ? <ErrorPage kind="404" /> : <PublicWebsite />}
+          </AuthProvider>
+        </ToastProvider>
+      </BackNavigationProvider>
+    </AppErrorBoundary>
   );
 }

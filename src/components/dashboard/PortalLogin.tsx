@@ -1,26 +1,30 @@
 import { useState, type FormEvent } from "react";
-import { ArrowLeft, Lock, ShieldAlert, ShieldCheck, UserCheck } from "lucide-react";
+import { ArrowLeft, Lock, ShieldCheck, UserCheck } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Logo } from "@/components/ui/Logo";
 import { useAuth } from "@/context/auth";
 import { ApiClientError } from "@/lib/api";
 import { navigate } from "@/lib/router";
+import { ErrorPage, NetworkErrorPage } from "@/components/ErrorPage";
 
 export function PortalLogin({ portal }: { portal: "admin" | "staff" }) {
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [networkError, setNetworkError] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const attemptLogin = async () => {
     setError(null);
+    setNetworkError(false);
     setBusy(true);
     try {
       await login(email, password, portal);
     } catch (err) {
-      if (err instanceof ApiClientError) {
+      if (err instanceof ApiClientError && err.status === 0) {
+        setNetworkError(true);
+      } else if (err instanceof ApiClientError) {
         setError(err.message);
       } else {
         setError("Sign in failed. Please verify your credentials and try again.");
@@ -29,6 +33,13 @@ export function PortalLogin({ portal }: { portal: "admin" | "staff" }) {
       setBusy(false);
     }
   };
+
+  const onSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    void attemptLogin();
+  };
+
+  if (networkError) return <NetworkErrorPage onRetry={attemptLogin} />;
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-black px-4 py-12 text-white">
@@ -119,25 +130,5 @@ export function PortalLogin({ portal }: { portal: "admin" | "staff" }) {
 }
 
 export function AccessDeniedView() {
-  const { profile, logout } = useAuth();
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-black px-4 text-white">
-      <div className="hud max-w-md rounded-3xl border border-blood/40 bg-coal p-8 text-center">
-        <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-blood/15 text-blood-400">
-          <ShieldAlert className="h-8 w-8" />
-        </div>
-        <h1 className="mt-5 font-display text-2xl font-black uppercase">Access Denied</h1>
-        <p className="mt-3 text-sm leading-relaxed text-white/65">
-          Signed in as <strong className="text-white">{profile?.email}</strong> ({profile?.role}). Only administrator
-          accounts are authorized to access the Admin Dashboard.
-        </p>
-        <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center">
-          <Button onClick={() => navigate("/staff")}>Go to Staff Dashboard</Button>
-          <Button variant="outline" onClick={() => logout()}>
-            Sign out
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
+  return <ErrorPage kind="403" />;
 }

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 
-export type AppRoute = "public" | "admin" | "staff";
+export type AppRoute = "public" | "admin" | "staff" | "not-found";
 
 export function matchRoute(pathname: string): AppRoute {
   const clean = pathname.replace(/\/+$/, "") || "/";
   if (clean === "/admin" || clean.startsWith("/admin/")) return "admin";
   if (clean === "/staff" || clean.startsWith("/staff/")) return "staff";
-  return "public";
+  if (clean === "/") return "public";
+  return "not-found";
 }
 
 export function navigate(to: string) {
