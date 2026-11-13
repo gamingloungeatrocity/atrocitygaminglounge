@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { SPY_IDS } from "@/data/site";
 
-export type AppRoute = "public" | "admin" | "staff" | "not-found";
+export type AppRoute = "public" | "admin" | "staff" | "terms" | "privacy" | "refund" | "not-found";
 
 export function matchRoute(pathname: string, hash = ""): AppRoute {
   const clean = pathname.replace(/\/+$/, "") || "/";
@@ -10,6 +10,9 @@ export function matchRoute(pathname: string, hash = ""): AppRoute {
   // links rendered a login screen instead of the site's 404 page.
   if (clean === "/admin") return "admin";
   if (clean === "/staff") return "staff";
+  if (clean === "/terms-and-conditions") return "terms";
+  if (clean === "/privacy-policy") return "privacy";
+  if (clean === "/refund-policy") return "refund";
   if (clean === "/") {
     const fragment = hash.replace(/^#/, "");
     // The public page deliberately supports its registered section anchors.

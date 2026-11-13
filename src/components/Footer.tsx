@@ -54,7 +54,7 @@ export function Footer() {
       <div aria-hidden="true" className="pointer-events-none absolute -bottom-40 left-1/2 h-80 w-[60rem] -translate-x-1/2 rounded-full bg-blood/10 blur-[120px]" />
 
       <div className="relative mx-auto max-w-7xl px-4 pb-8 pt-16 sm:px-6 lg:px-8">
-        <div className="grid gap-12 sm:grid-cols-2 lg:grid-cols-[1.4fr_0.8fr_1fr_1.3fr]">
+        <div className="grid gap-12 sm:grid-cols-2 lg:grid-cols-[1.3fr_0.75fr_0.9fr_1fr_1.3fr]">
           <div>
             <a href="#home" aria-label={`${BUSINESS.name} — back to top`} className="inline-block rounded-full">
               <Logo size="lg" />
@@ -90,6 +90,15 @@ export function Footer() {
             ]}
           />
           <FooterNav title="Experiences" links={EXPERIENCES} />
+
+          <FooterNav
+            title="Policies"
+            links={[
+              { label: "Terms & Conditions", href: "/terms-and-conditions", isRoute: true },
+              { label: "Privacy Policy", href: "/privacy-policy", isRoute: true },
+              { label: "Refund & Cancellation", href: "/refund-policy", isRoute: true },
+            ]}
+          />
 
           <div>
             <h3 className={COL_TITLE}>Contact</h3>
