@@ -86,11 +86,13 @@ function estimateFor(
   pricing: PricingRecord[],
   tournaments: TournamentRecord[],
   selectedTournamentId: string,
+  players: number,
 ): number | null {
   const cat = consolePref === "PS4 Pro" ? "ps4pro" : "ps4";
-  if (service === "hourly") return getRateFromPricing(pricing, cat, getService(service).durationMins, cat === "ps4pro" ? 90 : 70);
-  if (service === "pack3") return getRateFromPricing(pricing, cat, 180, cat === "ps4pro" ? 230 : 200);
-  if (service === "daypass") return getRateFromPricing(pricing, cat, 300, cat === "ps4pro" ? 380 : 350);
+  const playerCount = Math.max(1, players);
+  if (service === "hourly") return getRateFromPricing(pricing, cat, getService(service).durationMins, cat === "ps4pro" ? 90 : 70) * playerCount;
+  if (service === "pack3") return getRateFromPricing(pricing, cat, 180, cat === "ps4pro" ? 230 : 200) * playerCount;
+  if (service === "daypass") return getRateFromPricing(pricing, cat, 300, cat === "ps4pro" ? 380 : 350) * playerCount;
   if (service === "group") return getRateFromPricing(pricing, "whole_lounge", 180, 2500);
   if (service === "tournament") {
     const t = tournaments.find((x) => x.id === selectedTournamentId || x.title === selectedTournamentId);
@@ -106,9 +108,9 @@ function getServicePriceLabel(service: Service, consolePref: ConsolePref, pricin
     return `₹${p} flat`;
   }
   if (service.kind === "tournament") return "Register";
-  if (service.id === "hourly") return `₹${getRateFromPricing(pricing, cat, 60, cat === "ps4pro" ? 90 : 70)} / hr`;
-  if (service.id === "pack3") return `₹${getRateFromPricing(pricing, cat, 180, cat === "ps4pro" ? 230 : 200)} / 3 hrs`;
-  if (service.id === "daypass") return `₹${getRateFromPricing(pricing, cat, 300, cat === "ps4pro" ? 380 : 350)} / 5 hrs`;
+  if (service.id === "hourly") return `₹${getRateFromPricing(pricing, cat, 60, cat === "ps4pro" ? 90 : 70)} / player / hr`;
+  if (service.id === "pack3") return `₹${getRateFromPricing(pricing, cat, 180, cat === "ps4pro" ? 230 : 200)} / player / 3 hrs`;
+  if (service.id === "daypass") return `₹${getRateFromPricing(pricing, cat, 300, cat === "ps4pro" ? 380 : 350)} / player / 5 hrs`;
   return "Select";
 }
 
@@ -268,6 +270,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
     bookingCode?: string;
     recordId?: string;
     bookingType: "console" | "group" | "tournament";
+    totalAmount?: number | null;
     paidOnline?: boolean;
   } | null>(null);
   const [payNotice, setPayNotice] = useState<string | null>(null);
@@ -292,13 +295,13 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
     {
       id: "PS4",
       label: "PS4",
-      rate: ps4Row?.status === "maintenance" || ps4Row?.status === "disabled" ? ps4Row.status : `₹${ps4Hourly}/hr`,
+      rate: ps4Row?.status === "maintenance" || ps4Row?.status === "disabled" ? ps4Row.status : `₹${ps4Hourly}/player/hr`,
       disabled: ps4Row?.status === "maintenance" || ps4Row?.status === "disabled",
     },
     {
       id: "PS4 Pro",
       label: "PS4 Pro",
-      rate: ps4ProRow?.status === "maintenance" || ps4ProRow?.status === "disabled" ? ps4ProRow.status : `₹${ps4ProHourly}/hr`,
+      rate: ps4ProRow?.status === "maintenance" || ps4ProRow?.status === "disabled" ? ps4ProRow.status : `₹${ps4ProHourly}/player/hr`,
       disabled: ps4ProRow?.status === "maintenance" || ps4ProRow?.status === "disabled",
     },
   ];
@@ -319,7 +322,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
     () => (needsSchedule ? openSlotsFor(form.date, form.service, form.hours) : []),
     [needsSchedule, form.date, form.service, form.hours],
   );
-  const estimate = estimateFor(form.service, form.consolePref, pricing, tournaments, form.tournament);
+  const estimate = estimateFor(form.service, form.consolePref, pricing, tournaments, form.tournament, form.players);
   const pricingCategory = form.consolePref === "PS4 Pro" ? "ps4pro" : "ps4";
   const selectedPricing = isConsole
     ? pricing.find(
@@ -384,6 +387,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
       let bookingCode: string | undefined;
       let recordId: string | undefined;
       let bookingType: "console" | "group" | "tournament" = "console";
+      let totalAmount = estimate;
 
       if (backendConnected) {
         if (service.kind === "console") {
@@ -403,6 +407,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
           });
           bookingCode = res.booking_code;
           recordId = res.id;
+          totalAmount = Number(res.total_amount);
         } else if (service.kind === "group") {
           bookingType = "group";
           const res = await api.public.createGroupBooking({
@@ -416,6 +421,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
           });
           bookingCode = res.booking_code;
           recordId = res.id;
+          totalAmount = Number(res.total_amount);
         } else {
           bookingType = "tournament";
           const tId =
@@ -433,11 +439,11 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
         }
       }
 
-      const url = whatsappHref(buildMessage(form, phone, estimate, tournaments, bookingCode));
+      const url = whatsappHref(buildMessage(form, phone, totalAmount, tournaments, bookingCode));
       if (!backendConnected) {
         window.open(url, "_blank", "noopener,noreferrer");
       }
-      setConfirmed({ whatsappUrl: url, bookingCode, recordId, bookingType });
+      setConfirmed({ whatsappUrl: url, bookingCode, recordId, bookingType, totalAmount });
     } catch (err) {
       if (err instanceof ApiClientError) {
         setErrors({ server: err.message });
@@ -532,7 +538,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
         {payNotice && <p className="mt-3 text-xs text-amber-200">{payNotice}</p>}
 
         <dl className="mx-auto mt-6 max-w-sm space-y-2 rounded-2xl border border-white/10 bg-black/40 p-4 text-left text-sm">
-          {rows.map(([label, value]) => (
+          {[...rows, ...(confirmed.totalAmount !== null && confirmed.totalAmount !== undefined ? [["Total", `₹${confirmed.totalAmount}`] as [string, string]] : [])].map(([label, value]) => (
             <div key={label} className="flex items-start justify-between gap-4">
               <dt className="text-white/50">{label}</dt>
               <dd className="text-right font-medium">{value}</dd>
@@ -541,9 +547,9 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
         </dl>
 
         <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
-          {confirmed.recordId && !confirmed.paidOnline && estimate && estimate > 0 && (
+          {confirmed.recordId && !confirmed.paidOnline && confirmed.totalAmount && confirmed.totalAmount > 0 && (
             <Button onClick={handlePayOnline}>
-              <CreditCard /> Pay Online (₹{estimate})
+              <CreditCard /> Pay Online (₹{confirmed.totalAmount})
             </Button>
           )}
           <Button variant={confirmed.recordId ? "outline" : "primary"} href={confirmed.whatsappUrl} target="_blank" rel="noopener noreferrer">

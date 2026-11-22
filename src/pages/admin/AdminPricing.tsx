@@ -9,8 +9,8 @@ import { api, ApiClientError, type PricingRecord } from "@/lib/api";
 import { PanelLoader, StatusBadge } from "@/components/dashboard/StatusBadge";
 
 const CATEGORY_TITLES: Record<PricingRecord["category"], string> = {
-  ps4: "PlayStation 4 Pricing",
-  ps4pro: "PlayStation 4 Pro Pricing",
+  ps4: "PlayStation 4 Price Per Player",
+  ps4pro: "PlayStation 4 Pro Price Per Player",
   whole_lounge: "Whole Lounge Pricing",
   tournament: "Tournament Entry Fee",
 };
@@ -118,7 +118,7 @@ export function AdminPricing({ onChanged }: { onChanged?: () => void }) {
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-white/10 bg-coal p-4 text-sm text-white/65">
-        Configure prices per duration directly in PostgreSQL without editing code. Previously confirmed bookings retain their original locked price.
+        PS4 and PS4 Pro prices are charged per player for each configured duration. Whole-lounge and tournament prices are unchanged. Previously confirmed bookings retain their original locked price.
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -159,6 +159,7 @@ export function AdminPricing({ onChanged }: { onChanged?: () => void }) {
                         <span className="font-display text-lg font-black text-blood-300">
                           <Rupee />
                           {Number(p.price)}
+                          {(cat === "ps4" || cat === "ps4pro") && <span className="ml-1 font-tech text-xs font-bold text-white/50">/ player</span>}
                         </span>
                         <button
                           type="button"
@@ -235,7 +236,9 @@ export function AdminPricing({ onChanged }: { onChanged?: () => void }) {
               />
             </div>
             <div>
-              <label className="block font-tech text-xs font-bold uppercase tracking-[0.2em] text-white/55">Price (₹)</label>
+              <label className="block font-tech text-xs font-bold uppercase tracking-[0.2em] text-white/55">
+                {form.category === "ps4" || form.category === "ps4pro" ? "Price per player (₹)" : "Price (₹)"}
+              </label>
               <input
                 type="number"
                 min={0}

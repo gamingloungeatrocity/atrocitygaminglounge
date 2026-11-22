@@ -170,6 +170,53 @@ describe("Fixed Booking Package Validation", () => {
       pricingRepository.findById = originalFindById;
     }
   });
+
+  it("calculates individual console package totals from the configured per-player rate", async () => {
+    const packages = [
+      { id: "ps4-1h", category: "ps4", duration_minutes: 60, bonus_minutes: 0, price: 70, is_active: true, label: "1 Hour" },
+      { id: "ps4pro-1h", category: "ps4pro", duration_minutes: 60, bonus_minutes: 0, price: 90, is_active: true, label: "1 Hour" },
+    ];
+    const originalFindById = pricingRepository.findById;
+    pricingRepository.findById = async (id) => packages.find((entry) => entry.id === id) || null;
+
+    try {
+      for (const [players, total] of [[1, 70], [2, 140], [3, 210], [4, 280]]) {
+        const resolved = await pricingService.resolveBookingPackage({
+          pricingId: "ps4-1h",
+          category: "ps4",
+          durationMinutes: 60,
+          players,
+        });
+        assert.equal(resolved.pricePerPlayer, 70);
+        assert.equal(resolved.price, total);
+      }
+
+      const ps4Pro = await pricingService.resolveBookingPackage({
+        pricingId: "ps4pro-1h",
+        category: "ps4pro",
+        durationMinutes: 60,
+        players: 2,
+      });
+      assert.equal(ps4Pro.price, 180);
+    } finally {
+      pricingRepository.findById = originalFindById;
+    }
+  });
+
+  it("keeps the whole-lounge package price flat regardless of group size", async () => {
+    const originalFindByCategoryAndDuration = pricingRepository.findByCategoryAndDuration;
+    pricingRepository.findByCategoryAndDuration = async (category, duration) =>
+      category === "whole_lounge" && duration === 180
+        ? { id: "whole-lounge", category, duration_minutes: 180, bonus_minutes: 0, price: 2500, label: "Whole Lounge" }
+        : null;
+
+    try {
+      const resolved = await pricingService.calculatePrice({ category: "whole_lounge", durationMinutes: 180, players: 8 });
+      assert.equal(resolved.price, 2500);
+    } finally {
+      pricingRepository.findByCategoryAndDuration = originalFindByCategoryAndDuration;
+    }
+  });
 });
 
 describe("Cashfree Webhook Signature Verification", () => {

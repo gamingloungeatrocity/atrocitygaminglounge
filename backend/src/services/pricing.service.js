@@ -60,7 +60,7 @@ export const pricingService = {
    * duration and amount are validated against that record so neither can be
    * altered by a browser or API client.
    */
-  async resolveBookingPackage({ pricingId, category, durationMinutes }) {
+  async resolveBookingPackage({ pricingId, category, durationMinutes, players = 1 }) {
     const selected = await pricingRepository.findById(pricingId);
     if (!selected || !selected.is_active || selected.category !== category) {
       throw new ApiError(400, "INVALID_PACKAGE", "The selected booking package is no longer available for this console.");
@@ -70,8 +70,20 @@ export const pricingService = {
       throw new ApiError(400, "PACKAGE_DURATION_MISMATCH", "The booking duration must match the selected package.");
     }
 
+    const playerCount = Number(players);
+    if (!Number.isInteger(playerCount) || playerCount < 1) {
+      throw new ApiError(400, "INVALID_PLAYER_COUNT", "At least one player is required for a console booking.");
+    }
+
+    const pricePerPlayer = Number(selected.price);
+
     return {
-      price: Number(selected.price),
+      // Console package prices are configured by the administrator per player.
+      // Keep `price` as the booking total so existing callers and payment flow
+      // continue to use the authoritative amount without an API change.
+      price: Math.round(pricePerPlayer * playerCount * 100) / 100,
+      pricePerPlayer,
+      players: playerCount,
       bonusMinutes: Number(selected.bonus_minutes || 0),
       pricingId: selected.id,
       label: selected.label,

@@ -42,10 +42,12 @@ export const bookingService = {
     }
 
     const category = consoleRow.slug === "ps4pro" || consoleRow.console_type === "PS4 Pro" ? "ps4pro" : "ps4";
+    const players = Number(input.players || 1);
     const { price, bonusMinutes, durationMinutes } = await pricingService.resolveBookingPackage({
       pricingId: input.pricing_id,
       category,
       durationMinutes: input.duration,
+      players,
     });
 
     const bookingCode = generateCode("BKG");
@@ -61,7 +63,7 @@ export const bookingService = {
       p_duration: durationMinutes,
       p_bonus_minutes: bonusMinutes,
       p_game_title: input.game_title || null,
-      p_players: input.players || 1,
+      p_players: players,
       p_total_amount: price,
       p_booking_source: isStaffWalkin ? "walkin" : "online",
       p_booking_status: isStaffWalkin ? "confirmed" : input.booking_status || "confirmed",
