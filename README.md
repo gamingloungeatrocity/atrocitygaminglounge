@@ -30,10 +30,14 @@ cp backend/.env.example backend/.env
 | `SUPABASE_URL` | Your Supabase Project URL (`https://xyzcompany.supabase.co`) |
 | `SUPABASE_PUBLISHABLE_KEY` | Supabase Publishable Key (replaces legacy `anon` key) |
 | `SUPABASE_SECRET_KEY` | Supabase Secret Key (replaces legacy `service_role` key; keep secret!) |
-| `CASHFREE_APP_ID` | Cashfree Merchant App ID / Client ID |
-| `CASHFREE_SECRET_KEY` | Cashfree Client Secret Key |
-| `CASHFREE_ENV` | Environment: `sandbox` (for testing) or `production` (for live) |
+| `CASHFREE_APP_ID` | Cashfree App ID matching the selected environment |
+| `CASHFREE_SECRET_KEY` | Cashfree Secret Key paired with that App ID |
+| `CASHFREE_ENV` | Selects both API and checkout mode: `sandbox` or `production` |
 | `CASHFREE_API_VERSION` | API version (default: `2023-08-01`) |
+| `CASHFREE_RETURN_URL` | Optional full Cashfree return URL; Production requires a public HTTPS URL |
+| `CASHFREE_WEBHOOK_URL` | Optional public backend URL for Cashfree webhook notifications |
+
+Use the Sandbox credential pair with `CASHFREE_ENV=sandbox` for local testing. In Render, set `CASHFREE_ENV=production` and configure both production credentials together. Production does not load a local `.env` file. For Production order creation, `CASHFREE_RETURN_URL` (or `FRONTEND_URL` when unset) must be a public HTTPS URL; localhost HTTP URLs are accepted only in Sandbox.
 
 ### 2. Frontend (`.env`)
 
@@ -118,8 +122,8 @@ When built, the backend can serve the production SPA directly from the `dist/` d
 1. Customer books a slot (Console, Whole Lounge, or Tournament).
 2. Customer clicks **Pay Online**.
 3. Frontend requests `POST /api/payments/cashfree/order`.
-4. Backend communicates with Cashfree (`POST /pg/orders`) using `CASHFREE_APP_ID` and `CASHFREE_SECRET_KEY`, returning a `payment_session_id`.
-5. Frontend opens Cashfree Checkout Modal (`Cashfree.checkout({ paymentSessionId, redirectTarget: "_modal" })`).
+4. Backend selects the Cashfree API endpoint from `CASHFREE_ENV`, uses the matching backend credentials, and returns a `payment_session_id` with the safe environment name.
+5. Frontend opens Cashfree Checkout Modal in the environment returned by the backend (`Cashfree.checkout({ paymentSessionId, redirectTarget: "_modal" })`).
 6. Upon completion, frontend calls `POST /api/payments/cashfree/verify`.
 7. Backend verifies the payment status directly with Cashfree (`GET /pg/orders/{order_id}` and `GET /pg/orders/{order_id}/payments`) before updating booking status to `paid`.
 8. Webhooks are also supported at `POST /api/payments/cashfree/webhook` with HMAC-SHA256 Base64 signature verification.

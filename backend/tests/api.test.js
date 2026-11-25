@@ -8,6 +8,7 @@ import { createApp } from "../src/server.js";
 import { availabilityService, intervalsOverlap, parsePgRangeMs } from "../src/services/availability.service.js";
 import {
   cashfreeOrderMatchesPayment,
+  getCashfreeBaseUrl,
   matchesPaymentReference,
   paymentService,
   verifyCashfreeWebhookSignature,
@@ -287,6 +288,84 @@ describe("Cashfree Webhook Signature Verification", () => {
 });
 
 describe("Cashfree booking payment flows", () => {
+  it("selects the endpoint from CASHFREE_ENV", () => {
+    assert.equal(getCashfreeBaseUrl("sandbox"), "https://sandbox.cashfree.com/pg");
+    assert.equal(getCashfreeBaseUrl("production"), "https://api.cashfree.com/pg");
+    assert.throws(() => getCashfreeBaseUrl("live"), (error) => error.code === "CASHFREE_ENV_INVALID");
+  });
+
+  it("rejects incomplete credentials before attempting an order", async () => {
+    const original = {
+      cashfreeAppId: env.cashfreeAppId,
+      cashfreeSecretKey: env.cashfreeSecretKey,
+      cashfreeEnv: env.cashfreeEnv,
+    };
+    env.cashfreeAppId = "production-app-id";
+    env.cashfreeSecretKey = "";
+    env.cashfreeEnv = "production";
+
+    try {
+      await assert.rejects(
+        paymentService.createCashfreeOrder({}),
+        (error) => error.code === "CASHFREE_NOT_CONFIGURED" && /both Cashfree credentials/.test(error.message),
+      );
+    } finally {
+      env.cashfreeAppId = original.cashfreeAppId;
+      env.cashfreeSecretKey = original.cashfreeSecretKey;
+      env.cashfreeEnv = original.cashfreeEnv;
+    }
+  });
+
+  it("rejects localhost HTTP return URLs for Production before calling Cashfree", async () => {
+    const original = {
+      cashfreeAppId: env.cashfreeAppId,
+      cashfreeSecretKey: env.cashfreeSecretKey,
+      cashfreeEnv: env.cashfreeEnv,
+      cashfreeReturnUrl: env.cashfreeReturnUrl,
+      frontendUrl: env.frontendUrl,
+      findBooking: bookingRepository.findById,
+      fetch: globalThis.fetch,
+    };
+    const record = {
+      id: "10000000-0000-4000-8000-000000000005",
+      booking_code: "BKG-RETURN-URL",
+      customer_name: "Player",
+      customer_phone: "9025785087",
+      total_amount: 70,
+      payment_status: "pending",
+      booking_status: "confirmed",
+    };
+    env.cashfreeAppId = "production-app-id";
+    env.cashfreeSecretKey = "production-secret-key";
+    env.cashfreeEnv = "production";
+    env.cashfreeReturnUrl = "";
+    env.frontendUrl = "http://localhost:5173";
+    bookingRepository.findById = async () => record;
+    globalThis.fetch = async () => {
+      throw new Error("Cashfree must not be called with an insecure Production return URL.");
+    };
+
+    try {
+      await assert.rejects(
+        paymentService.createCashfreeOrder({
+          booking_type: "console",
+          record_id: record.id,
+          reference: record.booking_code,
+          customer_phone: record.customer_phone,
+        }),
+        (error) => error.code === "CASHFREE_RETURN_URL_INVALID",
+      );
+    } finally {
+      env.cashfreeAppId = original.cashfreeAppId;
+      env.cashfreeSecretKey = original.cashfreeSecretKey;
+      env.cashfreeEnv = original.cashfreeEnv;
+      env.cashfreeReturnUrl = original.cashfreeReturnUrl;
+      env.frontendUrl = original.frontendUrl;
+      bookingRepository.findById = original.findBooking;
+      globalThis.fetch = original.fetch;
+    }
+  });
+
   it("creates sandbox orders using the saved PS4, PS4 Pro, group, and tournament prices", async () => {
     const records = [
       {
@@ -325,6 +404,9 @@ describe("Cashfree booking payment flows", () => {
     const originals = {
       cashfreeAppId: env.cashfreeAppId,
       cashfreeSecretKey: env.cashfreeSecretKey,
+      cashfreeEnv: env.cashfreeEnv,
+      cashfreeReturnUrl: env.cashfreeReturnUrl,
+      frontendUrl: env.frontendUrl,
       findBooking: bookingRepository.findById,
       findGroup: groupBookingRepository.findById,
       findRegistration: tournamentRepository.findRegistrationById,
@@ -337,6 +419,9 @@ describe("Cashfree booking payment flows", () => {
 
     env.cashfreeAppId = "test-app-id";
     env.cashfreeSecretKey = "test-secret";
+    env.cashfreeEnv = "sandbox";
+    env.cashfreeReturnUrl = "";
+    env.frontendUrl = "http://localhost:5173";
     bookingRepository.findById = async (id) => records.find((r) => r.booking_type === "console" && r.record_id === id)?.record || null;
     groupBookingRepository.findById = async (id) => records.find((r) => r.booking_type === "group" && r.record_id === id)?.record || null;
     tournamentRepository.findRegistrationById = async (id) => records.find((r) => r.booking_type === "tournament" && r.record_id === id)?.record || null;
@@ -376,16 +461,153 @@ describe("Cashfree booking payment flows", () => {
         assert.equal(createdPayment.amount, testCase.amount);
         assert.equal(createdPayment[testCase.link], testCase.record_id);
         assert.equal(order.environment, "sandbox");
+        assert.equal(payload.order_meta.return_url, "http://localhost:5173/?cf_order_id={order_id}");
       }
     } finally {
       env.cashfreeAppId = originals.cashfreeAppId;
       env.cashfreeSecretKey = originals.cashfreeSecretKey;
+      env.cashfreeEnv = originals.cashfreeEnv;
+      env.cashfreeReturnUrl = originals.cashfreeReturnUrl;
+      env.frontendUrl = originals.frontendUrl;
       bookingRepository.findById = originals.findBooking;
       groupBookingRepository.findById = originals.findGroup;
       tournamentRepository.findRegistrationById = originals.findRegistration;
       paymentRepository.create = originals.createPayment;
       paymentRepository.applyCashfreeStatus = originals.applyStatus;
       globalThis.fetch = originals.fetch;
+    }
+  });
+
+  it("creates a production order with production checkout mode when configured", async () => {
+    const original = {
+      cashfreeAppId: env.cashfreeAppId,
+      cashfreeSecretKey: env.cashfreeSecretKey,
+      cashfreeEnv: env.cashfreeEnv,
+      cashfreeReturnUrl: env.cashfreeReturnUrl,
+      findBooking: bookingRepository.findById,
+      createPayment: paymentRepository.create,
+      fetch: globalThis.fetch,
+    };
+    const record = {
+      id: "10000000-0000-4000-8000-000000000003",
+      booking_code: "BKG-PROD",
+      customer_name: "Player",
+      customer_phone: "9025785087",
+      total_amount: 70,
+      payment_status: "pending",
+      booking_status: "confirmed",
+    };
+
+    env.cashfreeAppId = "production-app-id";
+    env.cashfreeSecretKey = "production-secret-key";
+    env.cashfreeEnv = "production";
+    env.cashfreeReturnUrl = "https://payments.example.com/return?cf_order_id={order_id}";
+    bookingRepository.findById = async () => record;
+    paymentRepository.create = async (payment) => ({ id: "payment-production", ...payment });
+    globalThis.fetch = async (url, options) => {
+      assert.equal(String(url), "https://api.cashfree.com/pg/orders");
+      assert.equal(options.headers["x-client-id"], "production-app-id");
+      assert.equal(options.headers["x-client-secret"], "production-secret-key");
+      assert.equal(options.headers["x-api-version"], env.cashfreeApiVersion);
+      const payload = JSON.parse(options.body);
+      assert.equal(payload.order_meta.return_url, "https://payments.example.com/return?cf_order_id={order_id}");
+      return {
+        ok: true,
+        json: async () => ({
+          order_id: payload.order_id,
+          cf_order_id: "cf-production-order",
+          payment_session_id: "production-session",
+          order_amount: payload.order_amount,
+          order_currency: payload.order_currency,
+        }),
+      };
+    };
+
+    try {
+      const order = await paymentService.createCashfreeOrder({
+        booking_type: "console",
+        record_id: record.id,
+        reference: record.booking_code,
+        customer_phone: record.customer_phone,
+      });
+      assert.equal(order.environment, "production");
+      assert.equal(order.payment_session_id, "production-session");
+    } finally {
+      env.cashfreeAppId = original.cashfreeAppId;
+      env.cashfreeSecretKey = original.cashfreeSecretKey;
+      env.cashfreeEnv = original.cashfreeEnv;
+      env.cashfreeReturnUrl = original.cashfreeReturnUrl;
+      bookingRepository.findById = original.findBooking;
+      paymentRepository.create = original.createPayment;
+      globalThis.fetch = original.fetch;
+    }
+  });
+
+  it("reports Cashfree authentication errors without returning or logging credentials", async () => {
+    const original = {
+      cashfreeAppId: env.cashfreeAppId,
+      cashfreeSecretKey: env.cashfreeSecretKey,
+      cashfreeEnv: env.cashfreeEnv,
+      cashfreeReturnUrl: env.cashfreeReturnUrl,
+      findBooking: bookingRepository.findById,
+      fetch: globalThis.fetch,
+      consoleError: console.error,
+    };
+    const record = {
+      id: "10000000-0000-4000-8000-000000000004",
+      booking_code: "BKG-AUTH",
+      customer_name: "Player",
+      customer_phone: "9025785087",
+      total_amount: 70,
+      payment_status: "pending",
+      booking_status: "confirmed",
+    };
+    const logEntries = [];
+
+    env.cashfreeAppId = "production-app-id";
+    env.cashfreeSecretKey = "production-secret-key";
+    env.cashfreeEnv = "production";
+    env.cashfreeReturnUrl = "https://payments.example.com/return?cf_order_id={order_id}";
+    bookingRepository.findById = async () => record;
+    globalThis.fetch = async () => ({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+      headers: { get: (name) => (name === "x-request-id" ? "cashfree-request-123" : null) },
+      text: async () => JSON.stringify({
+        message: "authentication Failed",
+        code: "request_failed",
+        type: "authentication_error",
+      }),
+    });
+    console.error = (...args) => logEntries.push(args);
+
+    try {
+      await assert.rejects(
+        paymentService.createCashfreeOrder({
+          booking_type: "console",
+          record_id: record.id,
+          reference: record.booking_code,
+          customer_phone: record.customer_phone,
+        }),
+        (error) => error.code === "CASHFREE_AUTHENTICATION_FAILED" && !error.message.includes("secret"),
+      );
+      const diagnostics = JSON.stringify(logEntries);
+      assert.match(diagnostics, /production/);
+      assert.ok(diagnostics.includes("https://api.cashfree.com/pg/orders"));
+      assert.match(diagnostics, /2023-08-01/);
+      assert.match(diagnostics, /401/);
+      assert.match(diagnostics, /request_failed/);
+      assert.match(diagnostics, /cashfree-request-123/);
+      assert.doesNotMatch(diagnostics, /production-app-id|production-secret-key/);
+    } finally {
+      env.cashfreeAppId = original.cashfreeAppId;
+      env.cashfreeSecretKey = original.cashfreeSecretKey;
+      env.cashfreeEnv = original.cashfreeEnv;
+      env.cashfreeReturnUrl = original.cashfreeReturnUrl;
+      bookingRepository.findById = original.findBooking;
+      globalThis.fetch = original.fetch;
+      console.error = original.consoleError;
     }
   });
 
@@ -416,6 +638,7 @@ describe("Cashfree booking payment flows", () => {
     const originals = {
       cashfreeAppId: env.cashfreeAppId,
       cashfreeSecretKey: env.cashfreeSecretKey,
+      cashfreeEnv: env.cashfreeEnv,
       findCashfreeOrder: paymentRepository.findByCashfreeOrderId,
       findBooking: bookingRepository.findById,
       findGroup: groupBookingRepository.findById,
@@ -427,6 +650,7 @@ describe("Cashfree booking payment flows", () => {
 
     env.cashfreeAppId = "test-app-id";
     env.cashfreeSecretKey = "test-secret";
+    env.cashfreeEnv = "sandbox";
     paymentRepository.findByCashfreeOrderId = async (id) => paymentCases.find((payment) => payment.cashfree_order_id === id) || null;
     bookingRepository.findById = async (id) => paymentCases.find((payment) => payment.booking_id === id)?.record || null;
     groupBookingRepository.findById = async (id) => paymentCases.find((payment) => payment.group_booking_id === id)?.record || null;
@@ -457,6 +681,7 @@ describe("Cashfree booking payment flows", () => {
     } finally {
       env.cashfreeAppId = originals.cashfreeAppId;
       env.cashfreeSecretKey = originals.cashfreeSecretKey;
+      env.cashfreeEnv = originals.cashfreeEnv;
       paymentRepository.findByCashfreeOrderId = originals.findCashfreeOrder;
       bookingRepository.findById = originals.findBooking;
       groupBookingRepository.findById = originals.findGroup;

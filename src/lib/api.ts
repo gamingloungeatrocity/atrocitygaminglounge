@@ -413,7 +413,7 @@ export const api = {
         amount: number;
         currency: string;
         payment_id: string;
-        environment: string;
+        environment: "sandbox" | "production";
       }>("/api/payments/cashfree/order", { method: "POST", body: JSON.stringify(body) }),
     verifyCashfreeOrder: (body: { order_id: string; reference: string; customer_phone: string }) =>
       request<PaymentRecord>("/api/payments/cashfree/verify", { method: "POST", body: JSON.stringify(body) }),

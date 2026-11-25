@@ -1,5 +1,23 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+
+if (process.env.NODE_ENV !== "production") {
+  dotenv.config();
+}
+
+const hasCashfreePrimaryCredentials =
+  process.env.CASHFREE_APP_ID !== undefined || process.env.CASHFREE_SECRET_KEY !== undefined;
+const cashfreeAppId = hasCashfreePrimaryCredentials
+  ? process.env.CASHFREE_APP_ID || ""
+  : process.env.CASHFREE_CLIENT_ID || "";
+const cashfreeSecretKey = hasCashfreePrimaryCredentials
+  ? process.env.CASHFREE_SECRET_KEY || ""
+  : process.env.CASHFREE_CLIENT_SECRET || "";
+const cashfreeEnv = String(
+  process.env.CASHFREE_ENV || (process.env.NODE_ENV === "production" ? "" : "sandbox"),
+)
+  .trim()
+  .toLowerCase();
 
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
@@ -16,9 +34,10 @@ export const env = {
   get supabaseServiceRoleKey() {
     return this.supabaseSecretKey;
   },
-  cashfreeAppId: process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || "",
-  cashfreeSecretKey: process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || "",
-  cashfreeEnv: "sandbox",
+  cashfreeAppId,
+  cashfreeSecretKey,
+  cashfreeEnv,
+  cashfreeReturnUrl: process.env.CASHFREE_RETURN_URL || "",
   cashfreeWebhookUrl: process.env.CASHFREE_WEBHOOK_URL || "",
   cashfreeApiVersion: process.env.CASHFREE_API_VERSION || "2023-08-01",
 };
@@ -28,7 +47,10 @@ export function isSupabaseConfigured() {
 }
 
 export function isCashfreeConfigured() {
-  return Boolean(env.cashfreeAppId && env.cashfreeSecretKey);
+  return (
+    ["sandbox", "production"].includes(env.cashfreeEnv) &&
+    Boolean(env.cashfreeAppId && env.cashfreeSecretKey)
+  );
 }
 
 let _adminClient = null;

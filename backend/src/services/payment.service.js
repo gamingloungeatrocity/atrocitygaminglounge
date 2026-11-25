@@ -8,8 +8,139 @@ import { recordAuditLog } from "../utils/audit.js";
 import { ApiError, generateCode } from "../utils/errors.js";
 import { normalizeIndianPhone } from "../utils/time.js";
 
-function getCashfreeBaseUrl() {
-  return "https://sandbox.cashfree.com/pg";
+const CASHFREE_API_VERSION_FALLBACK = "2023-08-01";
+
+export function getCashfreeBaseUrl(environment = env.cashfreeEnv) {
+  if (environment === "sandbox") return "https://sandbox.cashfree.com/pg";
+  if (environment === "production") return "https://api.cashfree.com/pg";
+  throw new ApiError(503, "CASHFREE_ENV_INVALID", "Set CASHFREE_ENV to either sandbox or production.");
+}
+
+function getCashfreeConfig() {
+  const apiBaseUrl = getCashfreeBaseUrl();
+  if (!env.cashfreeAppId || !env.cashfreeSecretKey) {
+    throw new ApiError(
+      503,
+      "CASHFREE_NOT_CONFIGURED",
+      "Set both Cashfree credentials for the selected environment on the backend.",
+    );
+  }
+  return {
+    environment: env.cashfreeEnv,
+    apiBaseUrl,
+    apiVersion: env.cashfreeApiVersion || CASHFREE_API_VERSION_FALLBACK,
+    headers: {
+      "x-client-id": env.cashfreeAppId,
+      "x-client-secret": env.cashfreeSecretKey,
+      "x-api-version": env.cashfreeApiVersion || CASHFREE_API_VERSION_FALLBACK,
+      Accept: "application/json",
+    },
+  };
+}
+
+function getCashfreeReturnUrl(environment) {
+  const returnUrl =
+    env.cashfreeReturnUrl ||
+    `${env.frontendUrl.replace(/\/+$/, "")}/?cf_order_id={order_id}`;
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(returnUrl.replace("{order_id}", "cashfree-order"));
+  } catch {
+    throw new ApiError(
+      503,
+      "CASHFREE_RETURN_URL_INVALID",
+      "Set a valid absolute HTTP(S) CASHFREE_RETURN_URL or FRONTEND_URL.",
+    );
+  }
+
+  const hostname = parsedUrl.hostname.toLowerCase();
+  const isLocalHost =
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]";
+  if (!["http:", "https:"].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password) {
+    throw new ApiError(
+      503,
+      "CASHFREE_RETURN_URL_INVALID",
+      "Set a valid absolute HTTP(S) CASHFREE_RETURN_URL or FRONTEND_URL.",
+    );
+  }
+  if (environment === "production" && (parsedUrl.protocol !== "https:" || isLocalHost)) {
+    throw new ApiError(
+      503,
+      "CASHFREE_RETURN_URL_INVALID",
+      "Production Cashfree requires a public HTTPS CASHFREE_RETURN_URL or FRONTEND_URL.",
+    );
+  }
+  return returnUrl;
+}
+
+function sanitizeCashfreeText(value, maxLength = 240) {
+  return String(value || "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/((?:x-client-secret|client[_-]?secret|secret[_-]?key|authorization|access[_-]?token|token)\s*[:=]\s*)\S+/gi, "$1[REDACTED]")
+    .slice(0, maxLength);
+}
+
+async function logCashfreeApiFailure(response, config, endpoint, operation) {
+  const responseText = await response.text();
+  let payload = null;
+  if (responseText) {
+    try {
+      payload = JSON.parse(responseText);
+    } catch {
+      payload = null;
+    }
+  }
+
+  const errorCode = sanitizeCashfreeText(payload?.code || payload?.error_code || "");
+  const errorType = sanitizeCashfreeText(payload?.type || "");
+  const errorMessage = sanitizeCashfreeText(payload?.message || response.statusText || `HTTP ${response.status}`);
+  const requestId = sanitizeCashfreeText(
+    response.headers.get("x-request-id") ||
+      response.headers.get("x-cf-request-id") ||
+      response.headers.get("x-cashfree-request-id") ||
+      payload?.cf_request_id ||
+      payload?.request_id ||
+      "",
+    120,
+  );
+  const authenticationFailure =
+    response.status === 401 ||
+    response.status === 403 ||
+    /authentication/i.test(errorType) ||
+    /authentication failed/i.test(errorMessage);
+
+  console.error("[cashfree_api_error]", {
+    operation,
+    environment: config.environment,
+    endpoint,
+    apiVersion: config.apiVersion,
+    status: response.status,
+    cashfreeErrorCode: errorCode || null,
+    cashfreeErrorType: errorType || null,
+    cashfreeErrorMessage: errorMessage || null,
+    requestId: requestId || null,
+  });
+
+  return { authenticationFailure };
+}
+
+function cashfreeApiError(operation, authenticationFailure) {
+  if (authenticationFailure) {
+    return new ApiError(
+      502,
+      "CASHFREE_AUTHENTICATION_FAILED",
+      `Cashfree authentication failed for the configured environment. ${operation} could not continue; your booking remains saved. Contact the lounge.`,
+    );
+  }
+  return new ApiError(
+    502,
+    "CASHFREE_API_REQUEST_FAILED",
+    `Cashfree could not complete ${operation}. Your booking remains saved; please retry later or contact the lounge.`,
+  );
 }
 
 export function matchesPaymentReference(record, { reference, customer_phone }) {
@@ -75,19 +206,15 @@ async function applyCashfreeStatus(payment, paymentStatus, metadata = {}, cashfr
 }
 
 async function reconcileCashfreeOrder(payment) {
-  const baseUrl = getCashfreeBaseUrl();
-  const headers = {
-    "x-client-id": env.cashfreeAppId,
-    "x-client-secret": env.cashfreeSecretKey,
-    "x-api-version": env.cashfreeApiVersion || "2023-08-01",
-    Accept: "application/json",
-  };
-  const cfRes = await fetch(`${baseUrl}/orders/${encodeURIComponent(payment.cashfree_order_id)}`, {
+  const config = getCashfreeConfig();
+  const orderEndpoint = `${config.apiBaseUrl}/orders/${encodeURIComponent(payment.cashfree_order_id)}`;
+  const cfRes = await fetch(orderEndpoint, {
     method: "GET",
-    headers,
+    headers: config.headers,
   });
   if (!cfRes.ok) {
-    throw new ApiError(502, "CASHFREE_VERIFICATION_FAILED", "Could not verify order with Cashfree.");
+    const failure = await logCashfreeApiFailure(cfRes, config, `${config.apiBaseUrl}/orders/{order_id}`, "order verification");
+    throw cashfreeApiError("payment verification", failure.authenticationFailure);
   }
 
   const orderData = await cfRes.json();
@@ -107,16 +234,21 @@ async function reconcileCashfreeOrder(payment) {
   }
 
   if (status === "ACTIVE") {
-    const paymentsResponse = await fetch(
-      `${baseUrl}/orders/${encodeURIComponent(payment.cashfree_order_id)}/payments`,
-      { method: "GET", headers },
-    );
+    const paymentsEndpoint = `${config.apiBaseUrl}/orders/${encodeURIComponent(payment.cashfree_order_id)}/payments`;
+    const paymentsResponse = await fetch(paymentsEndpoint, { method: "GET", headers: config.headers });
     if (paymentsResponse.ok) {
       const attempts = await paymentsResponse.json();
       const latestAttempt = Array.isArray(attempts) ? attempts[attempts.length - 1] : null;
       if (attempts.length > 0 && attempts.every((attempt) => attempt.payment_status === "FAILED")) {
         return applyCashfreeStatus(payment, "failed", { cashfree_payment_details: latestAttempt });
       }
+    } else {
+      await logCashfreeApiFailure(
+        paymentsResponse,
+        config,
+        `${config.apiBaseUrl}/orders/{order_id}/payments`,
+        "payment attempts lookup",
+      );
     }
     return payment;
   }
@@ -147,13 +279,7 @@ export const paymentService = {
    * Creates a Cashfree payment order and session for frontend checkout.
    */
   async createCashfreeOrder({ booking_type, record_id, reference, customer_phone }) {
-    if (!env.cashfreeAppId || !env.cashfreeSecretKey) {
-      throw new ApiError(
-        503,
-        "CASHFREE_NOT_CONFIGURED",
-        "Online Cashfree payments are not configured yet on the server. Please book and pay at the lounge.",
-      );
-    }
+    const cashfreeConfig = getCashfreeConfig();
 
     let amountInr = 0;
     let customerName = "Gamer";
@@ -206,8 +332,8 @@ export const paymentService = {
     const cfOrderId = `cf_${booking_type.slice(0, 3)}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const customerId = `cust_${record_id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 25)}`;
     const receipt = generateCode("CF");
+    const returnUrl = getCashfreeReturnUrl(cashfreeConfig.environment);
 
-    const baseUrl = getCashfreeBaseUrl();
     const payload = {
       order_id: cfOrderId,
       order_amount: Number(amountInr.toFixed(2)),
@@ -219,27 +345,25 @@ export const paymentService = {
         customer_email: customerEmail || "guest@atrocitygaming.example",
       },
       order_meta: {
-        return_url: `${env.frontendUrl.replace(/\/+$/, "")}/?cf_order_id={order_id}`,
+        return_url: returnUrl,
         ...(env.cashfreeWebhookUrl ? { notify_url: env.cashfreeWebhookUrl } : {}),
       },
       order_note: `Atrocity Lounge ${booking_type} #${receipt}`,
     };
 
-    const cfRes = await fetch(`${baseUrl}/orders`, {
+    const ordersEndpoint = `${cashfreeConfig.apiBaseUrl}/orders`;
+    const cfRes = await fetch(ordersEndpoint, {
       method: "POST",
       headers: {
-        "x-client-id": env.cashfreeAppId,
-        "x-client-secret": env.cashfreeSecretKey,
-        "x-api-version": env.cashfreeApiVersion || "2023-08-01",
+        ...cashfreeConfig.headers,
         "Content-Type": "application/json",
-        Accept: "application/json",
       },
       body: JSON.stringify(payload),
     });
 
     if (!cfRes.ok) {
-      const text = await cfRes.text();
-      throw new ApiError(502, "CASHFREE_ORDER_FAILED", `Failed to initialize Cashfree order: ${text}`);
+      const failure = await logCashfreeApiFailure(cfRes, cashfreeConfig, ordersEndpoint, "order creation");
+      throw cashfreeApiError("payment order creation", failure.authenticationFailure);
     }
 
     const order = await cfRes.json();
@@ -269,7 +393,7 @@ export const paymentService = {
       amount: order.order_amount,
       currency: order.order_currency,
       payment_id: payment.id,
-      environment: "sandbox",
+      environment: cashfreeConfig.environment,
     };
   },
 
@@ -277,9 +401,7 @@ export const paymentService = {
    * Verifies Cashfree payment status server-to-server and marks the booking Paid.
    */
   async verifyCashfreePayment({ order_id, reference, customer_phone }) {
-    if (!env.cashfreeAppId || !env.cashfreeSecretKey) {
-      throw new ApiError(503, "CASHFREE_NOT_CONFIGURED", "Cashfree credentials are not configured on server.");
-    }
+    getCashfreeConfig();
 
     const payment = await paymentRepository.findByCashfreeOrderId(order_id);
     if (!payment) {

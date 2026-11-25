@@ -723,6 +723,10 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
         reference: confirmed.bookingCode,
         customer_phone: confirmed.customerPhone,
       });
+      if (order.environment !== "sandbox" && order.environment !== "production") {
+        setPayNotice("Cashfree returned an invalid checkout environment. Your booking is saved with payment pending; contact the lounge.");
+        return;
+      }
       setConfirmed((current) => {
         if (!current) return current;
         const updated = { ...current, orderId: order.order_id, totalAmount: Number(order.amount) };
@@ -735,7 +739,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
         redirect?: boolean;
         paymentDetails?: unknown;
       };
-      type CashfreeFactory = (opts: { mode: "sandbox" }) => {
+      type CashfreeFactory = (opts: { mode: "sandbox" | "production" }) => {
         checkout: (opts: { paymentSessionId: string; redirectTarget?: string }) => Promise<{
           error?: CashfreeResult["error"];
           redirect?: CashfreeResult["redirect"];
@@ -762,7 +766,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
       }
 
       const cashfree = CashfreeCtor({
-        mode: "sandbox",
+        mode: order.environment,
       });
 
       const result = await cashfree.checkout({
