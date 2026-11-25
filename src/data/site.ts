@@ -60,9 +60,6 @@ export interface ConsoleInfo {
   tagline: string;
   description: string;
   image: string;
-  hourlyRate: number;
-  pack3Rate: number;
-  dayPassRate: number;
   specs: { label: string; value: string }[];
   highlights: string[];
 }
@@ -77,11 +74,8 @@ export const CONSOLES: ConsoleInfo[] = [
     description:
       "Reliable Full HD gaming with access to the complete game library — ideal for story campaigns, party games, and heated couch multiplayer with your squad.",
     image: ps4Img,
-    hourlyRate: 70,
-    pack3Rate: 200,
-    dayPassRate: 350,
     specs: [
-      { label: "Hourly rate", value: "₹70 / hour" },
+      { label: "Hourly rate", value: "See active package pricing" },
       { label: "Resolution", value: "1080p Full HD" },
       { label: "GPU", value: "1.84 TFLOPS" },
       { label: "Controller", value: "DualShock 4" },
@@ -97,11 +91,8 @@ export const CONSOLES: ConsoleInfo[] = [
     description:
       "More than twice the GPU power of standard PS4 for up to 4K output, HDR colour, and steadier boosted frame rates on enhanced titles — built for players who want every detail.",
     image: ps4ProImg,
-    hourlyRate: 90,
-    pack3Rate: 230,
-    dayPassRate: 380,
     specs: [
-      { label: "Hourly rate", value: "₹90 / hour" },
+      { label: "Hourly rate", value: "See active package pricing" },
       { label: "Resolution", value: "Up to 4K" },
       { label: "GPU", value: "4.2 TFLOPS" },
       { label: "Visuals", value: "HDR · Boost" },
@@ -123,8 +114,6 @@ export interface Service {
   name: string;
   short: string;
   kind: ServiceKind;
-  ps4Price: number | null;
-  ps4ProPrice: number | null;
   durationMins: number;
   note: string;
 }
@@ -135,8 +124,6 @@ export const SERVICES: Service[] = [
     name: "Per Hour",
     short: "Per Hour",
     kind: "console",
-    ps4Price: 70,
-    ps4ProPrice: 90,
     durationMins: 60,
     note: "Full game library · DualShock 4 controllers",
   },
@@ -145,28 +132,22 @@ export const SERVICES: Service[] = [
     name: "3 Hours Package",
     short: "3 Hours",
     kind: "console",
-    ps4Price: 200,
-    ps4ProPrice: 230,
     durationMins: 180,
-    note: "15 mins bonus play time · Save ₹10 on PS4 / ₹40 on PS4 Pro",
+    note: "15 mins bonus play time · Access to the full game library · DualShock 4 controllers",
   },
   {
     id: "daypass",
     name: "5 Hours Day Pass",
     short: "Day Pass",
     kind: "console",
-    ps4Price: 350,
-    ps4ProPrice: 380,
     durationMins: 300,
-    note: "30 mins bonus play time · Priority booking · Save ₹70 on PS4 Pro",
+    note: "30 mins bonus play time · Priority booking · Access to the full game library",
   },
   {
     id: "group",
     name: "Group Event (Full Venue)",
     short: "Group Event",
     kind: "group",
-    ps4Price: 2500,
-    ps4ProPrice: 2500,
     durationMins: 60,
     note: "Exclusive use of both PS4 & PS4 Pro stations",
   },
@@ -175,8 +156,6 @@ export const SERVICES: Service[] = [
     name: "Tournament Registration",
     short: "Tournament",
     kind: "tournament",
-    ps4Price: null,
-    ps4ProPrice: null,
     durationMins: 0,
     note: "Dates & entry details shared on WhatsApp",
   },
@@ -187,6 +166,7 @@ export const getService = (id: ServiceId): Service => SERVICES.find((s) => s.id 
 export interface BookingPrefill {
   service?: ServiceId;
   consolePref?: ConsolePref;
+  pricingId?: string;
   date?: string;
   time?: string;
   game?: string;
@@ -200,14 +180,10 @@ export interface PricingPlan {
   id: ServiceId;
   name: string;
   category: string;
-  ps4Price: number;
-  ps4ProPrice: number;
   bonusMinutes?: number;
   unit: string;
   tagline: string;
   features: string[];
-  ps4Savings?: string;
-  ps4ProSavings?: string;
   badge?: string;
   featured?: boolean;
   cta: string;
@@ -218,8 +194,6 @@ export const PRICING: PricingPlan[] = [
     id: "hourly",
     name: "Per Hour",
     category: "Drop In",
-    ps4Price: 70,
-    ps4ProPrice: 90,
     unit: "/ hour",
     tagline: "Drop in and play at your own pace.",
     features: ["Access to full game library", "DualShock 4 controllers", "Crystal-clear graphics & immersive gameplay"],
@@ -229,12 +203,8 @@ export const PRICING: PricingPlan[] = [
     id: "pack3",
     name: "3 Hours Package",
     category: "Squad Session",
-    ps4Price: 200,
-    ps4ProPrice: 230,
     unit: "/ 3 hours",
     tagline: "The perfect session with your squad.",
-    ps4Savings: "Save ₹10 on PS4",
-    ps4ProSavings: "Save ₹40 on PS4 Pro",
     features: ["15 mins bonus play time", "Access to full game library", "DualShock 4 controllers"],
     cta: "Book 3 Hours",
   },
@@ -242,11 +212,8 @@ export const PRICING: PricingPlan[] = [
     id: "daypass",
     name: "5 Hours Day Pass",
     category: "Marathon",
-    ps4Price: 350,
-    ps4ProPrice: 380,
     unit: "/ 5 hours",
     tagline: "Go all in — marathon mode unlocked.",
-    ps4ProSavings: "Save ₹70 on PS4 Pro",
     badge: "Ultimate Pass",
     featured: true,
     features: ["30 mins bonus play time", "Priority booking", "Access to full game library", "DualShock 4 controllers"],
@@ -367,12 +334,12 @@ export const FAQS: FaqItem[] = [
   {
     category: "Hardware",
     q: "Which consoles do you have at the lounge?",
-    a: "We have two dedicated stations: one PlayStation 4 (₹70/hr) and one PlayStation 4 Pro (₹90/hr). Both feature wireless DualShock 4 controllers and access to our full premium game library.",
+    a: "We have two dedicated stations: one PlayStation 4 and one PlayStation 4 Pro. Both feature wireless DualShock 4 controllers and access to our full premium game library.",
   },
   {
     category: "Hardware",
     q: "What is the price difference between PS4 and PS4 Pro?",
-    a: "PS4 is ₹70/hour (₹200 for 3 hours, ₹350 for 5 hours). PS4 Pro is ₹90/hour (₹230 for 3 hours, ₹380 for 5 hours), delivering 4K-ready output, HDR colour, and steadier boosted frame rates on enhanced titles.",
+    a: "Compare the currently configured PS4 and PS4 Pro packages in the Pricing Packages section. PS4 Pro also offers 4K-ready output, HDR colour, and steadier boosted frame rates on enhanced titles.",
   },
   {
     category: "Bookings",
@@ -412,7 +379,7 @@ export const FAQS: FaqItem[] = [
   {
     category: "Events",
     q: "Can we book the whole venue for a group?",
-    a: "Yes! Group events give your crew exclusive use of the entire venue (both PS4 and PS4 Pro stations) for a flat ₹2500 — ideal for birthdays, college squads and office outings. Book from the Events section or give us a call.",
+    a: "Yes! Group events give your crew exclusive use of the entire venue (both PS4 and PS4 Pro stations) at the active flat rate shown in the Pricing Packages section — ideal for birthdays, college squads and office outings. Book from the Events section or give us a call.",
   },
   {
     category: "Events",

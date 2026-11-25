@@ -85,6 +85,16 @@ export const tournamentRepository = {
     return data || [];
   },
 
+  async findRegistrationById(registrationId) {
+    const { data, error } = await getSupabaseAdmin()
+      .from("tournament_registrations")
+      .select("*, tournaments(id, title, game_name, entry_fee)")
+      .eq("id", registrationId)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
   async updateRegistration(regId, patch) {
     const { data, error } = await getSupabaseAdmin()
       .from("tournament_registrations")

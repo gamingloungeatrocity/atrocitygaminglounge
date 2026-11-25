@@ -10,49 +10,72 @@ import { SectionHeading } from "./ui/SectionHeading";
 import { Tabs, type TabItem } from "./ui/Tabs";
 import { CircleShape, SquareShape, TriangleShape } from "./ui/icons";
 
-const TAB_ITEMS: TabItem<ConsoleId>[] = [
-  {
-    id: "ps4",
-    label: (
-      <>
-        PS4 <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px] leading-none">₹70/hr</span>
-      </>
-    ),
-  },
-  {
-    id: "ps4pro",
-    label: (
-      <>
-        PS4 Pro <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px] leading-none">₹90/hr</span>
-      </>
-    ),
-  },
-];
+function serviceForDuration(durationMinutes: number) {
+  if (durationMinutes === 180) return "pack3" as const;
+  if (durationMinutes === 300) return "daypass" as const;
+  return "hourly" as const;
+}
 
 export function Consoles() {
   const { openBooking } = useBooking();
-  const { consoles: liveConsoles, pricing } = usePublicData();
+  const { consoles: liveConsoles, pricing, backendConnected } = usePublicData();
   const [active, setActive] = useState<ConsoleId>("ps4pro");
   const baseInfo = CONSOLES.find((c) => c.id === active) ?? CONSOLES[0];
   const liveRow = liveConsoles.find((c) => c.slug === active || c.console_type === baseInfo.short);
-  const priceByDur = (mins: number, fallback: number) => {
-    const found = pricing.find((p) => p.category === active && p.duration_minutes === mins && p.is_active);
-    return found ? Number(found.price) : fallback;
-  };
-  const hourlyRate = priceByDur(60, baseInfo.hourlyRate);
-  const pack3Rate = priceByDur(180, baseInfo.pack3Rate);
-  const dayPassRate = priceByDur(300, baseInfo.dayPassRate);
+  const activePricing = backendConnected
+    ? pricing.filter((item) => item.category === active && item.is_active && item.duration_minutes > 0)
+    : [];
+  const hourlyPricing = activePricing.find((item) => item.duration_minutes === 60);
+  const pack3Pricing = activePricing.find((item) => item.duration_minutes === 180);
+  const dayPassPricing = activePricing.find((item) => item.duration_minutes === 300);
+  const defaultPricing = hourlyPricing ?? activePricing[0];
+  const hourlyRate = hourlyPricing ? Number(hourlyPricing.price) : null;
+  const hourlyPs4 = backendConnected
+    ? pricing.find((item) => item.category === "ps4" && item.duration_minutes === 60 && item.is_active)
+    : undefined;
+  const hourlyPs4Pro = backendConnected
+    ? pricing.find((item) => item.category === "ps4pro" && item.duration_minutes === 60 && item.is_active)
+    : undefined;
   const consoleInfo = {
     ...baseInfo,
     name: liveRow?.name || baseInfo.name,
     description: liveRow?.description || baseInfo.description,
-    hourlyRate,
-    pack3Rate,
-    dayPassRate,
-    specs: baseInfo.specs.map((s) => (s.label === "Hourly rate" ? { ...s, value: `₹${hourlyRate} / hour` } : s)),
+    specs: baseInfo.specs.map((s) =>
+      s.label === "Hourly rate"
+        ? { ...s, value: hourlyRate === null ? "Not configured" : `₹${hourlyRate} / hour` }
+        : s,
+    ),
   };
   const liveStatus = liveRow?.effective_status || liveRow?.status || "available";
   const isBlocked = liveStatus === "maintenance" || liveStatus === "disabled";
+  const tabItems: TabItem<ConsoleId>[] = [
+    {
+      id: "ps4",
+      label: (
+        <>
+          PS4
+          {hourlyPs4 && (
+            <span className="ml-1 rounded bg-black/30 px-1.5 py-0.5 text-[10px] leading-none">
+              ₹{Number(hourlyPs4.price)}/hr
+            </span>
+          )}
+        </>
+      ),
+    },
+    {
+      id: "ps4pro",
+      label: (
+        <>
+          PS4 Pro
+          {hourlyPs4Pro && (
+            <span className="ml-1 rounded bg-black/30 px-1.5 py-0.5 text-[10px] leading-none">
+              ₹{Number(hourlyPs4Pro.price)}/hr
+            </span>
+          )}
+        </>
+      ),
+    },
+  ];
 
   return (
     <section id="consoles" aria-labelledby="consoles-title" className="relative overflow-hidden py-20 sm:py-28">
@@ -73,12 +96,12 @@ export function Consoles() {
                 Two Dedicated <span className="text-blood text-glow-sm">Gaming Stations</span>
               </>
             }
-            description="Our lounge features two consoles: one PlayStation 4 (₹70/hr) and one PlayStation 4 Pro (₹90/hr). Every station is tuned for smooth gameplay, DualShock 4 controllers, and our complete game library."
+            description="Our lounge features two dedicated PlayStation consoles. Every station is tuned for smooth gameplay, DualShock 4 controllers, and our complete game library."
           />
         </Reveal>
 
         <Reveal className="mt-10 flex justify-center">
-          <Tabs items={TAB_ITEMS} value={active} onChange={setActive} label="Choose a console station" idPrefix="console" />
+          <Tabs items={tabItems} value={active} onChange={setActive} label="Choose a console station" idPrefix="console" />
         </Reveal>
 
         <Reveal className="mt-8">
@@ -106,13 +129,26 @@ export function Consoles() {
 
             <div key={`${active}-info`} className="animate-fade-up">
               <div className="flex flex-wrap items-center gap-3">
-                <span className="rounded-full border border-blood/40 bg-blood/10 px-3 py-1 font-tech text-xs font-bold uppercase tracking-[0.2em] text-blood-300">
-                  <Rupee />
-                  {consoleInfo.hourlyRate} / hour
-                </span>
-                <span className="font-tech text-xs font-semibold text-white/50">
-                  3 hrs: ₹{consoleInfo.pack3Rate} · 5 hrs: ₹{consoleInfo.dayPassRate}
-                </span>
+                {hourlyRate !== null ? (
+                  <span className="rounded-full border border-blood/40 bg-blood/10 px-3 py-1 font-tech text-xs font-bold uppercase tracking-[0.2em] text-blood-300">
+                    <Rupee />
+                    {hourlyRate} / hour
+                  </span>
+                ) : (
+                  <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 font-tech text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Hourly tier unavailable
+                  </span>
+                )}
+                {(pack3Pricing || dayPassPricing) && (
+                  <span className="font-tech text-xs font-semibold text-white/50">
+                    {[
+                      pack3Pricing && `3 hrs: ₹${Number(pack3Pricing.price)}`,
+                      dayPassPricing && `5 hrs: ₹${Number(dayPassPricing.price)}`,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                )}
               </div>
 
               <h3 className="mt-3 font-display text-2xl font-black uppercase sm:text-3xl">{consoleInfo.name}</h3>
@@ -146,10 +182,22 @@ export function Consoles() {
 
               <div className="mt-8 flex flex-wrap gap-3">
                 <Button
-                  disabled={isBlocked}
-                  onClick={() => openBooking({ service: "hourly", consolePref: consoleInfo.short })}
+                  disabled={isBlocked || !defaultPricing}
+                  onClick={() =>
+                    defaultPricing &&
+                    openBooking({
+                      service: serviceForDuration(defaultPricing.duration_minutes),
+                      consolePref: consoleInfo.short,
+                      pricingId: defaultPricing.id,
+                    })
+                  }
                 >
-                  <Gamepad2 /> {isBlocked ? `${consoleInfo.short} Unavailable` : `Book ${consoleInfo.short} (₹${consoleInfo.hourlyRate}/hr)`}
+                  <Gamepad2 />
+                  {isBlocked
+                    ? `${consoleInfo.short} Unavailable`
+                    : defaultPricing
+                      ? `Book ${consoleInfo.short}${hourlyRate !== null ? ` (₹${hourlyRate}/hr)` : ""}`
+                      : `${consoleInfo.short} Pricing Unavailable`}
                 </Button>
                 <Button variant="outline" href="#pricing">
                   View All Rates

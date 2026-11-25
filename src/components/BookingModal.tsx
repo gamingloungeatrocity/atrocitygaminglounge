@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ComponentType, type FormEvent } from "react";
-import { Check, CircleCheckBig, Clock, Crown, CreditCard, Gamepad2, Hourglass, Info, Mail, Minus, Phone, Plus, Trophy, Users } from "lucide-react";
+import { Check, CircleCheckBig, Clock, Crown, CreditCard, Gamepad2, Hourglass, Info, LoaderCircle, Mail, Minus, Phone, Plus, Trophy, Users } from "lucide-react";
 import {
   BUSINESS,
   GAMES,
@@ -11,7 +11,7 @@ import {
   type ServiceId,
 } from "@/data/site";
 import { usePublicData } from "@/context/publicData";
-import { api, ApiClientError, type PricingRecord, type TournamentRecord } from "@/lib/api";
+import { api, ApiClientError, type AvailabilityResponse, type PricingRecord, type TournamentRecord } from "@/lib/api";
 import { mailtoHref, normalizeIndianMobile, telHref, whatsappHref } from "@/lib/contact";
 import { addDaysYmd, buildSlots, formatYmd, getIstNow, valueToLabel } from "@/lib/time";
 import { cn } from "@/utils/cn";
@@ -19,10 +19,17 @@ import { Modal } from "./Modal";
 import { Button } from "./ui/Button";
 import { Rupee } from "./ui/Rupee";
 import { WhatsAppIcon } from "./ui/icons";
+import {
+  clearBookingConfirmation,
+  loadBookingConfirmation,
+  saveBookingConfirmation,
+  type SavedBookingConfirmation,
+} from "@/lib/booking-confirmation";
 
 interface FormState {
   service: ServiceId;
   consolePref: ConsolePref;
+  pricingId: string;
   hours: number;
   date: string;
   time: string;
@@ -51,8 +58,6 @@ const LEGEND = "flex items-center gap-2.5 font-display text-sm font-black upperc
 
 function sessionMinutes(service: ServiceId, hours: number): number {
   const selected = getService(service);
-  // Console services are fixed packages. Their configured duration, rather
-  // than mutable form state, is the single source of truth for a booking.
   return selected.kind === "console" ? selected.durationMins : selected.durationMins || hours * 60;
 }
 
@@ -64,64 +69,92 @@ function formatDuration(durationMinutes: number): string {
   return `${durationMinutes} minutes`;
 }
 
-function openSlotsFor(date: string, service: ServiceId, hours: number) {
-  return buildSlots(date, sessionMinutes(service, hours), 30).filter((slot) => !slot.past);
+function openSlotsFor(date: string, service: ServiceId, hours: number, durationOverride?: number) {
+  return buildSlots(date, durationOverride ?? sessionMinutes(service, hours), 30).filter((slot) => !slot.past);
 }
 
-function getRateFromPricing(pricing: PricingRecord[], category: "ps4" | "ps4pro" | "whole_lounge", mins: number, fallback: number): number {
+function getAvailabilityConsoleSlug(
+  consoles: AvailabilityResponse["consoles"],
+  consolePref: ConsolePref,
+): string | undefined {
+  const expectedSlug = consolePref === "PS4 Pro" ? "ps4pro" : "ps4";
+  const expectedTypes = consolePref === "PS4 Pro" ? ["ps4pro", "playstation4pro"] : ["ps4", "playstation4"];
+  const normalize = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  return (
+    consoles.find((consoleRecord) => normalize(consoleRecord.slug) === expectedSlug)?.slug ??
+    consoles.find((consoleRecord) =>
+      [consoleRecord.console_type, consoleRecord.name].some((value) => expectedTypes.includes(normalize(value))),
+    )?.slug
+  );
+}
+
+function getRateFromPricing(pricing: PricingRecord[], category: "ps4" | "ps4pro" | "whole_lounge", mins: number): number | null {
   const exact = pricing.find((p) => p.category === category && p.duration_minutes === mins && p.is_active);
   if (exact) return Number(exact.price);
   if (category === "whole_lounge") {
     const anyWl = pricing.find((p) => p.category === "whole_lounge" && p.is_active);
     if (anyWl) return Number(anyWl.price);
   }
-  const hourly = pricing.find((p) => p.category === category && p.duration_minutes === 60 && p.is_active);
-  if (hourly) return Math.round(Number(hourly.price) * (mins / 60));
-  return fallback;
+  return null;
 }
 
 function estimateFor(
   service: ServiceId,
-  consolePref: ConsolePref,
+  selectedPricing: PricingRecord | undefined,
   pricing: PricingRecord[],
   tournaments: TournamentRecord[],
   selectedTournamentId: string,
   players: number,
 ): number | null {
-  const cat = consolePref === "PS4 Pro" ? "ps4pro" : "ps4";
-  const playerCount = Math.max(1, players);
-  if (service === "hourly") return getRateFromPricing(pricing, cat, getService(service).durationMins, cat === "ps4pro" ? 90 : 70) * playerCount;
-  if (service === "pack3") return getRateFromPricing(pricing, cat, 180, cat === "ps4pro" ? 230 : 200) * playerCount;
-  if (service === "daypass") return getRateFromPricing(pricing, cat, 300, cat === "ps4pro" ? 380 : 350) * playerCount;
-  if (service === "group") return getRateFromPricing(pricing, "whole_lounge", 180, 2500);
-  if (service === "tournament") {
+  const serviceDetails = getService(service);
+  if (serviceDetails.kind === "console") {
+    return selectedPricing ? Number(selectedPricing.price) * Math.max(1, players) : null;
+  }
+  if (serviceDetails.kind === "group") return getRateFromPricing(pricing, "whole_lounge", 180);
+  if (serviceDetails.kind === "tournament") {
     const t = tournaments.find((x) => x.id === selectedTournamentId || x.title === selectedTournamentId);
     return t ? Number(t.entry_fee) : null;
   }
   return null;
 }
 
-function getServicePriceLabel(service: Service, consolePref: ConsolePref, pricing: PricingRecord[]): string {
-  const cat = consolePref === "PS4 Pro" ? "ps4pro" : "ps4";
+function getServicePriceLabel(service: Service, pricing: PricingRecord[]): string {
   if (service.kind === "group") {
-    const p = getRateFromPricing(pricing, "whole_lounge", 180, 2500);
-    return `₹${p} flat`;
+    const price = getRateFromPricing(pricing, "whole_lounge", 180);
+    return price === null ? "Unavailable" : `₹${price} flat`;
   }
   if (service.kind === "tournament") return "Register";
-  if (service.id === "hourly") return `₹${getRateFromPricing(pricing, cat, 60, cat === "ps4pro" ? 90 : 70)} / player / hr`;
-  if (service.id === "pack3") return `₹${getRateFromPricing(pricing, cat, 180, cat === "ps4pro" ? 230 : 200)} / player / 3 hrs`;
-  if (service.id === "daypass") return `₹${getRateFromPricing(pricing, cat, 300, cat === "ps4pro" ? 380 : 350)} / player / 5 hrs`;
-  return "Select";
+  return "Select a configured package";
 }
 
-function createInitialState(prefill: BookingPrefill, tournaments: TournamentRecord[]): FormState {
+function serviceForDuration(durationMinutes: number): ServiceId {
+  if (durationMinutes === 180) return "pack3";
+  if (durationMinutes === 300) return "daypass";
+  return "hourly";
+}
+
+function createInitialState(
+  prefill: BookingPrefill,
+  tournaments: TournamentRecord[],
+  pricing: PricingRecord[],
+): FormState {
   const today = getIstNow().ymd;
-  const service = prefill.service ?? "hourly";
+  const requestedService = prefill.service ?? "hourly";
+  const consolePref = prefill.consolePref ?? "PS4";
+  const category = consolePref === "PS4 Pro" ? "ps4pro" : "ps4";
+  const matchingPricing = pricing.filter((item) => item.category === category && item.is_active && item.duration_minutes > 0);
+  const selectedPricing = prefill.pricingId
+    ? matchingPricing.find((item) => item.id === prefill.pricingId)
+    : matchingPricing.find((item) => item.duration_minutes === getService(requestedService).durationMins);
+  const service = selectedPricing ? serviceForDuration(selectedPricing.duration_minutes) : requestedService;
+  const hours = selectedPricing
+    ? selectedPricing.duration_minutes / 60
+    : Math.max(1, getService(service).durationMins / 60);
   let date = prefill.date && prefill.date >= today ? prefill.date : today;
-  let slots = openSlotsFor(date, service, 1);
+  let slots = openSlotsFor(date, service, hours, selectedPricing?.duration_minutes);
   if (!slots.length && !prefill.date) {
     date = addDaysYmd(today, 1);
-    slots = openSlotsFor(date, service, 1);
+    slots = openSlotsFor(date, service, hours, selectedPricing?.duration_minutes);
   }
   const time = prefill.time && slots.some((s) => s.value === prefill.time) ? prefill.time : (slots[0]?.value ?? "");
   const defaultTournament =
@@ -130,8 +163,9 @@ function createInitialState(prefill: BookingPrefill, tournaments: TournamentReco
     "";
   return {
     service,
-    consolePref: prefill.consolePref ?? "PS4",
-    hours: Math.max(1, getService(service).durationMins / 60),
+    consolePref,
+    pricingId: selectedPricing?.id ?? "",
+    hours,
     date,
     time,
     players: 1,
@@ -145,11 +179,15 @@ function createInitialState(prefill: BookingPrefill, tournaments: TournamentReco
   };
 }
 
-function summaryRows(form: FormState, tournaments: TournamentRecord[]): [string, string][] {
+function summaryRows(
+  form: FormState,
+  tournaments: TournamentRecord[],
+  selectedPricing?: PricingRecord,
+): [string, string][] {
   const svc = getService(form.service);
-  const rows: [string, string][] = [["Experience", svc.name]];
+  const rows: [string, string][] = [["Experience", selectedPricing?.label.trim() || svc.name]];
   if (svc.kind === "console") rows.push(["Console", form.consolePref]);
-  if (svc.kind === "console") rows.push(["Duration", formatDuration(svc.durationMins)]);
+  if (svc.kind === "console") rows.push(["Duration", formatDuration(selectedPricing?.duration_minutes ?? svc.durationMins)]);
   if (svc.kind !== "tournament") {
     rows.push(["Date", form.date ? formatYmd(form.date, "short") : "—"]);
     rows.push(["Time", form.time ? valueToLabel(form.time) : "—"]);
@@ -170,6 +208,7 @@ function buildMessage(
   phone: string,
   estimate: number | null,
   tournaments: TournamentRecord[],
+  selectedPricing?: PricingRecord,
   bookingCode?: string,
 ): string {
   const svc = getService(form.service);
@@ -180,9 +219,9 @@ function buildMessage(
     "",
     `• Name: ${form.name.trim()}`,
     `• Phone: +91 ${phone}`,
-    ...summaryRows(form, tournaments).map(([label, value]) => `• ${label}: ${value}`),
+    ...summaryRows(form, tournaments, selectedPricing).map(([label, value]) => `• ${label}: ${value}`),
   ];
-  if (estimate !== null && estimate > 0) lines.push(`• Estimated total: ₹${estimate}`);
+  if (estimate !== null && estimate > 0) lines.push(`• Total payable: ₹${estimate}`);
   if (form.notes.trim()) lines.push(`• Notes: ${form.notes.trim()}`);
   lines.push("", svc.kind === "tournament" ? "Please share tournament confirmation details. Thanks!" : "Please confirm my slot. Thanks!");
   return lines.join("\n");
@@ -262,24 +301,23 @@ function StepperField({
 
 function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: () => void }) {
   const { consoles, pricing, tournaments, backendConnected } = usePublicData();
-  const [form, setForm] = useState<FormState>(() => createInitialState(prefill, tournaments));
+  const [form, setForm] = useState<FormState>(() => createInitialState(prefill, tournaments, pricing));
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
-  const [confirmed, setConfirmed] = useState<{
-    whatsappUrl: string;
-    bookingCode?: string;
-    recordId?: string;
-    bookingType: "console" | "group" | "tournament";
-    totalAmount?: number | null;
-    paidOnline?: boolean;
-  } | null>(null);
+  const [confirmed, setConfirmed] = useState<SavedBookingConfirmation | null>(() => loadBookingConfirmation());
+  const [restoredOrderId] = useState(() => loadBookingConfirmation()?.orderId || null);
+  const [payProcessing, setPayProcessing] = useState(false);
   const [payNotice, setPayNotice] = useState<string | null>(null);
+  const [availability, setAvailability] = useState<AvailabilityResponse | null>(null);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const [availabilityRetry, setAvailabilityRetry] = useState(0);
 
   const today = useMemo(() => getIstNow().ymd, []);
   const maxDate = useMemo(() => addDaysYmd(today, 60), [today]);
 
-  const ps4Hourly = getRateFromPricing(pricing, "ps4", 60, 70);
-  const ps4ProHourly = getRateFromPricing(pricing, "ps4pro", 60, 90);
+  const ps4Hourly = getRateFromPricing(pricing, "ps4", 60);
+  const ps4ProHourly = getRateFromPricing(pricing, "ps4pro", 60);
   const ps4Row = consoles.find((c) => c.slug === "ps4" || c.console_type === "PS4");
   const ps4ProRow = consoles.find((c) => c.slug === "ps4pro" || c.console_type === "PS4 Pro");
   const isAvailable = (row: typeof ps4Row) => row?.status !== "maintenance" && row?.status !== "disabled";
@@ -295,13 +333,23 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
     {
       id: "PS4",
       label: "PS4",
-      rate: ps4Row?.status === "maintenance" || ps4Row?.status === "disabled" ? ps4Row.status : `₹${ps4Hourly}/player/hr`,
+      rate:
+        ps4Row?.status === "maintenance" || ps4Row?.status === "disabled"
+          ? ps4Row.status
+          : ps4Hourly === null
+            ? "No hourly tier"
+            : `₹${ps4Hourly}/player/hr`,
       disabled: ps4Row?.status === "maintenance" || ps4Row?.status === "disabled",
     },
     {
       id: "PS4 Pro",
       label: "PS4 Pro",
-      rate: ps4ProRow?.status === "maintenance" || ps4ProRow?.status === "disabled" ? ps4ProRow.status : `₹${ps4ProHourly}/player/hr`,
+      rate:
+        ps4ProRow?.status === "maintenance" || ps4ProRow?.status === "disabled"
+          ? ps4ProRow.status
+          : ps4ProHourly === null
+            ? "No hourly tier"
+            : `₹${ps4ProHourly}/player/hr`,
       disabled: ps4ProRow?.status === "maintenance" || ps4ProRow?.status === "disabled",
     },
   ];
@@ -318,38 +366,134 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
   const service = getService(form.service);
   const isConsole = service.kind === "console";
   const needsSchedule = service.kind !== "tournament";
-  const slots = useMemo(
-    () => (needsSchedule ? openSlotsFor(form.date, form.service, form.hours) : []),
-    [needsSchedule, form.date, form.service, form.hours],
-  );
-  const estimate = estimateFor(form.service, form.consolePref, pricing, tournaments, form.tournament, form.players);
   const pricingCategory = form.consolePref === "PS4 Pro" ? "ps4pro" : "ps4";
+  const consolePackages = backendConnected
+    ? pricing
+        .filter((entry) => entry.category === pricingCategory && entry.is_active && entry.duration_minutes > 0)
+        .sort((a, b) => a.sort_order - b.sort_order || a.duration_minutes - b.duration_minutes)
+    : [];
   const selectedPricing = isConsole
-    ? pricing.find(
-        (entry) =>
-          entry.category === pricingCategory &&
-          entry.duration_minutes === service.durationMins &&
-          entry.is_active,
-      )
+    ? consolePackages.find((entry) => entry.id === form.pricingId)
     : undefined;
-  const rows = summaryRows(form, tournaments);
+  const durationMinutes = isConsole
+    ? selectedPricing?.duration_minutes ?? service.durationMins
+    : sessionMinutes(form.service, form.hours);
+  const generatedSlots = useMemo(
+    () => (needsSchedule ? openSlotsFor(form.date, form.service, form.hours, isConsole ? durationMinutes : undefined) : []),
+    [needsSchedule, form.date, form.service, form.hours, isConsole, durationMinutes],
+  );
+  const availabilityForSelection =
+    isConsole &&
+    availability &&
+    availability.date === form.date &&
+    availability.durationMinutes === durationMinutes
+      ? availability
+      : null;
+  const availabilityConsoleSlug = availabilityForSelection
+    ? getAvailabilityConsoleSlug(availabilityForSelection.consoles, form.consolePref)
+    : undefined;
+  const availabilityReady = Boolean(
+    backendConnected &&
+      availabilityForSelection &&
+      availabilityConsoleSlug &&
+      !availabilityLoading &&
+      !availabilityError,
+  );
+  const slots = useMemo(() => {
+    if (!isConsole || !availabilityForSelection) return generatedSlots;
+    return availabilityForSelection.slots
+      .filter((slot) => !slot.past)
+      .map((slot) => {
+        const generatedSlot = generatedSlots.find((candidate) => candidate.value === slot.time);
+        if (generatedSlot) return generatedSlot;
+        const [hour, minute] = slot.time.split(":").map(Number);
+        return {
+          value: slot.time,
+          minutes: hour * 60 + minute,
+          label: valueToLabel(slot.time),
+          past: slot.past,
+          peak: false,
+        };
+      });
+  }, [availabilityForSelection, generatedSlots, isConsole]);
+  const isTimeAvailable = (time: string) => {
+    if (!isConsole) return true;
+    if (!availabilityReady || !availabilityForSelection || !availabilityConsoleSlug) return false;
+    const slot = availabilityForSelection.slots.find((entry) => entry.time === time);
+    return Boolean(slot && !slot.past && slot.consoles[availabilityConsoleSlug]?.available);
+  };
+  const availableSlotsCount = slots.filter((slot) => isTimeAvailable(slot.value)).length;
+  const availabilityUnavailable = isConsole && !availabilityLoading && !availabilityError && !availabilityReady;
+  const estimate = estimateFor(form.service, selectedPricing, pricing, tournaments, form.tournament, form.players);
+  const rows = summaryRows(form, tournaments, selectedPricing);
+  const wholeLoungePrice = getRateFromPricing(pricing, "whole_lounge", 180);
+  const bookingServiceNote = isConsole
+    ? [
+        selectedPricing?.bonus_minutes ? `${selectedPricing.bonus_minutes} mins bonus play time` : null,
+        form.service === "daypass" ? "Priority booking" : null,
+        "Full game library access",
+        "DualShock 4 controllers",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : service.note;
+  const experienceOptions = [
+    ...consolePackages.map((tier) => {
+      const optionService = serviceForDuration(tier.duration_minutes);
+      return {
+        key: tier.id,
+        service: optionService,
+        pricingId: tier.id,
+        label: tier.label.trim() || formatDuration(tier.duration_minutes),
+        priceLabel: `₹${Number(tier.price)} / player`,
+        Icon: SERVICE_ICONS[optionService],
+        checked: form.pricingId === tier.id,
+        disabled: false,
+      };
+    }),
+    ...SERVICES.filter((item) => item.kind !== "console" && !prefill.game).map((item) => ({
+      key: item.id,
+      service: item.id,
+      pricingId: "",
+      label: item.short,
+      priceLabel: getServicePriceLabel(item, pricing),
+      Icon: SERVICE_ICONS[item.id],
+      checked: form.service === item.id,
+      disabled: item.kind === "group" && wholeLoungePrice === null,
+    })),
+  ];
 
   const update = (patch: Partial<FormState>) => {
     setForm((prev) => {
       const next = { ...prev, ...patch };
       const selectedService = getService(next.service);
+      const availabilityInputsChanged = Object.keys(patch).some(
+        (key) => key === "date" || key === "service" || key === "hours" || key === "consolePref" || key === "pricingId",
+      );
+      let selectedDuration: number | undefined;
       if (selectedService.kind === "console") {
-        next.hours = Math.max(1, selectedService.durationMins / 60);
+        const category = next.consolePref === "PS4 Pro" ? "ps4pro" : "ps4";
+        const selectedTier = pricing.find(
+          (entry) => entry.id === next.pricingId && entry.category === category && entry.is_active,
+        );
+        selectedDuration = selectedTier?.duration_minutes;
+        next.hours = selectedTier
+          ? selectedTier.duration_minutes / 60
+          : Math.max(1, selectedService.durationMins / 60);
       }
-      if (getService(next.service).kind !== "tournament") {
-        const open = openSlotsFor(next.date, next.service, next.hours);
+      if (selectedService.kind === "console" && availabilityInputsChanged) {
+        next.time = "";
+      } else if (selectedService.kind !== "tournament") {
+        const open = openSlotsFor(next.date, next.service, next.hours, selectedDuration);
         if (!open.some((s) => s.value === next.time)) next.time = open[0]?.value ?? "";
       }
       return next;
     });
     setErrors((prev) => {
       const keys = Object.keys(patch);
-      const scheduleChange = keys.some((k) => k === "date" || k === "service" || k === "hours");
+      const scheduleChange = keys.some(
+        (k) => k === "date" || k === "service" || k === "hours" || k === "consolePref" || k === "pricingId",
+      );
       const copy = { ...prev };
       delete copy.server;
       for (const k of keys) delete copy[k as keyof FieldErrors];
@@ -358,6 +502,85 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
     });
   };
 
+  useEffect(() => {
+    if (!isConsole || !backendConnected) return;
+    const activeTiers = pricing.filter(
+      (entry) => entry.category === pricingCategory && entry.is_active && entry.duration_minutes > 0,
+    );
+    if (activeTiers.some((entry) => entry.id === form.pricingId)) return;
+    if (activeTiers.length === 0) {
+      if (form.pricingId) setForm((prev) => ({ ...prev, pricingId: "" }));
+      return;
+    }
+
+    const previousTier = pricing.find((entry) => entry.id === form.pricingId);
+    const preferredDuration = previousTier?.duration_minutes ?? service.durationMins;
+    const nextTier = activeTiers.find((entry) => entry.duration_minutes === preferredDuration) ?? activeTiers[0];
+    update({ service: serviceForDuration(nextTier.duration_minutes), pricingId: nextTier.id });
+  }, [backendConnected, form.pricingId, form.service, isConsole, pricing, pricingCategory]);
+
+  useEffect(() => {
+    if (!isConsole) {
+      setAvailability(null);
+      setAvailabilityLoading(false);
+      setAvailabilityError(null);
+      return;
+    }
+
+    if (!backendConnected) {
+      setAvailability(null);
+      setAvailabilityLoading(false);
+      setAvailabilityError("Availability service is unavailable. Please try again shortly.");
+      return;
+    }
+
+    let active = true;
+    setAvailability(null);
+    setAvailabilityLoading(true);
+    setAvailabilityError(null);
+
+    api.public
+      .getAvailability(form.date, durationMinutes, 30)
+      .then((result) => {
+        if (!active) return;
+        if (!getAvailabilityConsoleSlug(result.consoles, form.consolePref)) {
+          setAvailability(null);
+          setAvailabilityError("Could not determine availability for this console.");
+          return;
+        }
+        setAvailability(result);
+      })
+      .catch(() => {
+        if (active) {
+          setAvailability(null);
+          setAvailabilityError("Could not load time-slot availability.");
+        }
+      })
+      .finally(() => {
+        if (active) setAvailabilityLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [backendConnected, durationMinutes, form.consolePref, form.date, isConsole, availabilityRetry]);
+
+  useEffect(() => {
+    if (
+      !isConsole ||
+      !form.time ||
+      availabilityLoading ||
+      availabilityError ||
+      !availabilityReady ||
+      isTimeAvailable(form.time)
+    ) {
+      return;
+    }
+
+    setForm((prev) => (prev.time === form.time ? { ...prev, time: "" } : prev));
+    setErrors((prev) => ({ ...prev, time: "That slot is no longer available. Please choose another time." }));
+  }, [availabilityError, availabilityLoading, availabilityReady, form.time, isConsole]);
+
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const next: FieldErrors = {};
@@ -365,7 +588,17 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
     if (needsSchedule) {
       if (!form.date) next.date = "Please pick a date.";
       else if (form.date < today) next.date = "That date has already passed.";
-      if (!form.time) next.time = "No slots left on this date — please choose another day.";
+      if (isConsole && availabilityLoading) {
+        next.time = "Please wait while time-slot availability is checked.";
+      } else if (isConsole && (!availabilityReady || availabilityError)) {
+        next.time = availabilityError || "Time-slot availability is unavailable. Please retry.";
+      } else if (isConsole && availableSlotsCount === 0) {
+        next.time = "No available slots for this date.";
+      } else if (!form.time) {
+        next.time = "Please choose an available time slot.";
+      } else if (isConsole && !isTimeAvailable(form.time)) {
+        next.time = "That slot is no longer available. Please choose another time.";
+      }
     }
     if (form.name.trim().length < 2) next.name = "Please enter your name.";
     if (!phone) next.phone = "Enter a valid 10-digit Indian mobile number.";
@@ -380,6 +613,11 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
       return;
     }
 
+    if (!backendConnected) {
+      setErrors({ server: "The booking service is unavailable. Nothing has been saved or confirmed; please try again shortly." });
+      return;
+    }
+
     setSubmitting(true);
     setPayNotice(null);
 
@@ -388,64 +626,83 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
       let recordId: string | undefined;
       let bookingType: "console" | "group" | "tournament" = "console";
       let totalAmount = estimate;
+      let confirmationRows = rows;
 
-      if (backendConnected) {
-        if (service.kind === "console") {
-          bookingType = "console";
-          const targetConsole = form.consolePref;
-          const res = await api.public.createBooking({
-            customer_name: form.name.trim(),
-            customer_phone: phone,
-            console_type: targetConsole,
-            booking_date: form.date,
-            start_time: form.time,
-            duration: sessionMinutes(form.service, form.hours),
-            pricing_id: selectedPricing?.id ?? "",
-            game_title: form.game || null,
-            players: form.players,
-            notes: form.notes.trim() || null,
-          });
-          bookingCode = res.booking_code;
-          recordId = res.id;
-          totalAmount = Number(res.total_amount);
-        } else if (service.kind === "group") {
-          bookingType = "group";
-          const res = await api.public.createGroupBooking({
-            customer_name: form.name.trim(),
-            customer_phone: phone,
-            booking_date: form.date,
-            start_time: form.time,
-            duration: 180,
-            number_of_people: form.groupSize,
-            notes: form.notes.trim() || null,
-          });
-          bookingCode = res.booking_code;
-          recordId = res.id;
-          totalAmount = Number(res.total_amount);
-        } else {
-          bookingType = "tournament";
-          const tId =
-            tournaments.find((t) => t.id === form.tournament || t.title === form.tournament)?.id ||
-            tournaments[0]?.id;
-          if (!tId) throw new ApiClientError(400, "NO_TOURNAMENT", "No tournament selected.");
-          const res = await api.public.registerTournament(tId, {
-            participant_name: form.name.trim(),
-            phone,
-            gamer_tag: form.gamerTag.trim() || null,
-            notes: form.notes.trim() || null,
-          });
-          bookingCode = res.registration_code;
-          recordId = res.id;
-        }
+      if (service.kind === "console") {
+        bookingType = "console";
+        const targetConsole = form.consolePref;
+        const res = await api.public.createBooking({
+          customer_name: form.name.trim(),
+          customer_phone: phone,
+          console_type: targetConsole,
+          booking_date: form.date,
+          start_time: form.time,
+          duration: durationMinutes,
+          pricing_id: selectedPricing?.id ?? "",
+          game_title: form.game || null,
+          players: form.players,
+          notes: form.notes.trim() || null,
+        });
+        bookingCode = res.booking_code;
+        recordId = res.id;
+        totalAmount = Number(res.total_amount);
+      } else if (service.kind === "group") {
+        bookingType = "group";
+        const res = await api.public.createGroupBooking({
+          customer_name: form.name.trim(),
+          customer_phone: phone,
+          booking_date: form.date,
+          start_time: form.time,
+          duration: 180,
+          number_of_people: form.groupSize,
+          notes: form.notes.trim() || null,
+        });
+        bookingCode = res.booking_code;
+        recordId = res.id;
+        totalAmount = Number(res.total_amount);
+      } else {
+        bookingType = "tournament";
+        const tId =
+          tournaments.find((t) => t.id === form.tournament || t.title === form.tournament)?.id ||
+          tournaments[0]?.id;
+        if (!tId) throw new ApiClientError(400, "NO_TOURNAMENT", "No tournament selected.");
+        const res = await api.public.registerTournament(tId, {
+          participant_name: form.name.trim(),
+          phone,
+          gamer_tag: form.gamerTag.trim() || null,
+          notes: form.notes.trim() || null,
+        });
+        bookingCode = res.registration_code;
+        recordId = res.id;
+        totalAmount = Number(res.tournaments?.entry_fee ?? 0);
+        confirmationRows = [
+          ...rows.filter(([label]) => label !== "Tournament"),
+          ["Tournament", res.tournaments?.title || "Tournament"] as [string, string],
+        ];
       }
 
-      const url = whatsappHref(buildMessage(form, phone, totalAmount, tournaments, bookingCode));
-      if (!backendConnected) {
-        window.open(url, "_blank", "noopener,noreferrer");
+      const url = whatsappHref(buildMessage(form, phone, totalAmount, tournaments, selectedPricing, bookingCode));
+      if (!bookingCode || !recordId) {
+        throw new ApiClientError(500, "BOOKING_NOT_SAVED", "The server did not return a saved booking reference.");
       }
-      setConfirmed({ whatsappUrl: url, bookingCode, recordId, bookingType, totalAmount });
+      const savedConfirmation: SavedBookingConfirmation = {
+        whatsappUrl: url,
+        bookingCode,
+        recordId,
+        bookingType,
+        totalAmount: Number(totalAmount || 0),
+        paymentStatus: "pending",
+        customerPhone: phone,
+        summary: confirmationRows,
+      };
+      saveBookingConfirmation(savedConfirmation);
+      setConfirmed(savedConfirmation);
     } catch (err) {
-      if (err instanceof ApiClientError) {
+      if (err instanceof ApiClientError && err.code === "BOOKING_CONFLICT" && service.kind === "console") {
+        setForm((prev) => ({ ...prev, time: "" }));
+        setErrors({ time: "This slot was just booked. Please choose another time." });
+        setAvailabilityRetry((retry) => retry + 1);
+      } else if (err instanceof ApiClientError) {
         setErrors({ server: err.message });
       } else {
         setErrors({ server: "Unable to complete booking right now. Please try another slot or contact us." });
@@ -456,28 +713,43 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
   };
 
   const handlePayOnline = async () => {
-    if (!confirmed?.recordId) return;
+    if (!confirmed?.recordId || payProcessing || confirmed.paymentStatus === "paid") return;
+    setPayProcessing(true);
     setPayNotice(null);
     try {
       const order = await api.public.createCashfreeOrder({
         booking_type: confirmed.bookingType,
         record_id: confirmed.recordId,
+        reference: confirmed.bookingCode,
+        customer_phone: confirmed.customerPhone,
+      });
+      setConfirmed((current) => {
+        if (!current) return current;
+        const updated = { ...current, orderId: order.order_id, totalAmount: Number(order.amount) };
+        saveBookingConfirmation(updated);
+        return updated;
       });
 
-      const getCashfreeSdk = async (): Promise<((opts: { mode: string }) => {
+      type CashfreeResult = {
+        error?: { message?: string };
+        redirect?: boolean;
+        paymentDetails?: unknown;
+      };
+      type CashfreeFactory = (opts: { mode: "sandbox" }) => {
         checkout: (opts: { paymentSessionId: string; redirectTarget?: string }) => Promise<{
-          error?: { message?: string };
-          redirect?: boolean;
-          paymentDetails?: unknown;
+          error?: CashfreeResult["error"];
+          redirect?: CashfreeResult["redirect"];
+          paymentDetails?: CashfreeResult["paymentDetails"];
         }>;
-      }) | null> => {
-        const win = window as unknown as { Cashfree?: (opts: { mode: string }) => any };
+      };
+      const getCashfreeSdk = async (): Promise<CashfreeFactory | null> => {
+        const win = window as Window & { Cashfree?: CashfreeFactory };
         if (typeof win.Cashfree === "function") return win.Cashfree;
         return new Promise((resolve) => {
           const script = document.createElement("script");
           script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
           script.async = true;
-          script.onload = () => resolve((window as unknown as { Cashfree?: any }).Cashfree || null);
+          script.onload = () => resolve((window as Window & { Cashfree?: CashfreeFactory }).Cashfree || null);
           script.onerror = () => resolve(null);
           document.head.appendChild(script);
         });
@@ -485,12 +757,12 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
 
       const CashfreeCtor = await getCashfreeSdk();
       if (!CashfreeCtor) {
-        setPayNotice("Cashfree checkout script not loaded in browser. You can pay at the lounge via Cash or UPI.");
+        setPayNotice("Cashfree checkout could not be loaded. Your booking is saved with payment pending; please retry.");
         return;
       }
 
       const cashfree = CashfreeCtor({
-        mode: order.environment === "production" ? "production" : "sandbox",
+        mode: "sandbox",
       });
 
       const result = await cashfree.checkout({
@@ -498,47 +770,112 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
         redirectTarget: "_modal",
       });
 
-      if (result?.error) {
-        setPayNotice(result.error.message || "Payment was cancelled or could not be completed.");
-        return;
-      }
-
       try {
-        await api.public.verifyCashfreeOrder({ order_id: order.order_id });
-        setConfirmed((c) => (c ? { ...c, paidOnline: true } : c));
-        setPayNotice("Payment verified on backend server.");
+        const payment = await api.public.verifyCashfreeOrder({
+          order_id: order.order_id,
+          reference: confirmed.bookingCode,
+          customer_phone: confirmed.customerPhone,
+        });
+        setConfirmed((current) => {
+          if (!current) return current;
+          const updated = { ...current, paymentStatus: payment.payment_status };
+          saveBookingConfirmation(updated);
+          return updated;
+        });
+        setPayNotice(
+          payment.payment_status === "paid"
+            ? "Payment successfully verified by the server."
+            : payment.payment_status === "failed"
+              ? "Payment failed. You can retry using the button below."
+              : result?.error
+                ? "Checkout was closed or interrupted. Payment is still pending; you can retry."
+                : "Payment is pending confirmation. You can retry if needed.",
+        );
       } catch (e) {
-        setPayNotice(e instanceof ApiClientError ? e.message : "Payment verification failed.");
+        setPayNotice(
+          e instanceof ApiClientError
+            ? `${e.message} Your booking remains saved; retry payment to check again.`
+            : "Payment status could not be verified. Your booking remains saved and payment is pending.",
+        );
       }
     } catch (err) {
-      setPayNotice(err instanceof ApiClientError ? err.message : "Online payment unavailable; pay at lounge.");
+      setPayNotice(err instanceof ApiClientError ? err.message : "Online payment could not be started. Please retry.");
+    } finally {
+      setPayProcessing(false);
     }
   };
 
+  const callbackOrderId = new URLSearchParams(window.location.search).get("cf_order_id");
+  const orderIdToVerify = callbackOrderId || restoredOrderId;
+  useEffect(() => {
+    if (!orderIdToVerify || !confirmed || confirmed.orderId !== orderIdToVerify || payProcessing) return;
+    let active = true;
+    setPayProcessing(true);
+    api.public
+      .verifyCashfreeOrder({
+        order_id: orderIdToVerify,
+        reference: confirmed.bookingCode,
+        customer_phone: confirmed.customerPhone,
+      })
+      .then((payment) => {
+        if (!active) return;
+        const updated = {
+          ...confirmed,
+          paymentStatus: payment.payment_status,
+        };
+        saveBookingConfirmation(updated);
+        setConfirmed(updated);
+        setPayNotice(
+          payment.payment_status === "paid"
+            ? "Payment successfully verified by the server."
+            : payment.payment_status === "failed"
+              ? "Payment failed. You can retry using the button below."
+              : "Payment is pending confirmation. You can retry if needed.",
+        );
+      })
+      .catch(() => {
+        if (active) setPayNotice("Payment status could not be verified. Your booking remains saved and payment is pending.");
+      })
+      .finally(() => {
+        if (active) setPayProcessing(false);
+        const url = new URL(window.location.href);
+        url.searchParams.delete("cf_order_id");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      });
+    return () => {
+      active = false;
+    };
+  }, [callbackOrderId, orderIdToVerify, confirmed?.orderId]);
+
   if (confirmed) {
+    const typeLabel = confirmed.bookingType === "console" ? "Console booking" : confirmed.bookingType === "group" ? "Whole-lounge booking" : "Tournament registration";
     return (
       <div className="p-6 text-center sm:p-10">
-        <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-blood/15 shadow-[0_0_40px_rgba(229,9,20,0.45)] ring-1 ring-blood/50">
-          <CircleCheckBig className="h-10 w-10 text-blood-400" />
+        <div className={`mx-auto grid h-20 w-20 place-items-center rounded-full ring-1 ${confirmed.paymentStatus === "paid" ? "bg-emerald-500/15 ring-emerald-400/50" : "bg-blood/15 ring-blood/50"}`}>
+          {confirmed.paymentStatus === "paid" ? <CircleCheckBig className="h-10 w-10 text-emerald-300" /> : <Clock className="h-10 w-10 text-blood-400" />}
         </div>
         <h3 className="mt-6 font-display text-2xl font-black uppercase sm:text-3xl">
-          {confirmed.bookingCode ? `Confirmed: ${confirmed.bookingCode}` : "Request ready!"}
+          {confirmed.paymentStatus === "paid" ? "Payment successful" : "Request saved"}
         </h3>
         <p className="mx-auto mt-3 max-w-md text-white/65">
-          {confirmed.bookingCode
-            ? "Your request is saved in our system. You can send the summary on WhatsApp or pay online / at the lounge."
-            : "We’ve opened WhatsApp with your details. Hit Send and our team will confirm with you shortly."}
+          {confirmed.paymentStatus === "paid"
+            ? "Your payment was verified by our server. Your saved reference and booking details are below."
+            : "Your request is saved, but payment is not confirmed. Pay securely online or send the saved summary on WhatsApp."}
         </p>
 
-        {confirmed.paidOnline && (
-          <p className="mx-auto mt-3 w-fit rounded-full border border-emerald-500/40 bg-emerald-500/10 px-4 py-1 font-tech text-xs font-bold uppercase text-emerald-300">
-            Paid &amp; Verified
-          </p>
-        )}
-        {payNotice && <p className="mt-3 text-xs text-amber-200">{payNotice}</p>}
+        <p className="mx-auto mt-3 w-fit rounded-full border border-white/15 bg-white/[0.04] px-4 py-1 font-tech text-xs font-bold uppercase text-white/80">
+          Payment status: {confirmed.paymentStatus}
+        </p>
+        {payNotice && <p role="status" aria-live="polite" className="mt-3 text-xs text-amber-200">{payNotice}</p>}
 
         <dl className="mx-auto mt-6 max-w-sm space-y-2 rounded-2xl border border-white/10 bg-black/40 p-4 text-left text-sm">
-          {[...rows, ...(confirmed.totalAmount !== null && confirmed.totalAmount !== undefined ? [["Total", `₹${confirmed.totalAmount}`] as [string, string]] : [])].map(([label, value]) => (
+          {[
+            ["Reference", confirmed.bookingCode],
+            ["Booking type", typeLabel],
+            ...confirmed.summary,
+            ["Payable amount", `₹${confirmed.totalAmount}`],
+            ["Payment status", confirmed.paymentStatus],
+          ].map(([label, value]) => (
             <div key={label} className="flex items-start justify-between gap-4">
               <dt className="text-white/50">{label}</dt>
               <dd className="text-right font-medium">{value}</dd>
@@ -546,22 +883,28 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
           ))}
         </dl>
 
-        <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
-          {confirmed.recordId && !confirmed.paidOnline && confirmed.totalAmount && confirmed.totalAmount > 0 && (
-            <Button onClick={handlePayOnline}>
-              <CreditCard /> Pay Online (₹{confirmed.totalAmount})
+        {confirmed.paymentStatus !== "paid" && (
+          <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
+            {!["paid", "refunded"].includes(confirmed.paymentStatus) && confirmed.totalAmount > 0 && (
+              <Button onClick={handlePayOnline} disabled={payProcessing}>
+                {payProcessing ? <LoaderCircle className="animate-spin" /> : <CreditCard />}
+                {payProcessing ? "Processing payment..." : confirmed.paymentStatus === "failed" ? `Retry Payment (₹${confirmed.totalAmount})` : `Pay Now (₹${confirmed.totalAmount})`}
+              </Button>
+            )}
+            <Button variant="outline" href={confirmed.whatsappUrl} target="_blank" rel="noopener noreferrer">
+              <WhatsAppIcon /> Send on WhatsApp
             </Button>
-          )}
-          <Button variant={confirmed.recordId ? "outline" : "primary"} href={confirmed.whatsappUrl} target="_blank" rel="noopener noreferrer">
-            <WhatsAppIcon /> Send on WhatsApp
-          </Button>
-          <Button variant="outline" href={telHref}>
-            <Phone /> Call {BUSINESS.phoneDisplay}
-          </Button>
-        </div>
+            <Button variant="outline" href={telHref}>
+              <Phone /> Call {BUSINESS.phoneDisplay}
+            </Button>
+          </div>
+        )}
         <button
           type="button"
-          onClick={onClose}
+          onClick={() => {
+            clearBookingConfirmation();
+            onClose();
+          }}
           className="mt-5 font-tech text-sm font-bold uppercase tracking-[0.2em] text-white/50 transition-colors hover:text-white"
         >
           Done
@@ -584,16 +927,16 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
             <StepNum n={1} /> Choose your experience
           </legend>
           <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-            {SERVICES.filter((s) => !prefill.game || s.kind === "console").map((s) => {
-              const Icon = SERVICE_ICONS[s.id];
-              const checked = form.service === s.id;
-              const priceLabel = getServicePriceLabel(s, form.consolePref, pricing);
+            {experienceOptions.map((option) => {
+              const Icon = option.Icon;
               return (
                 <label
-                  key={s.id}
+                  key={option.key}
                   className={cn(
                     "relative flex cursor-pointer flex-col rounded-xl border p-3 transition-all duration-200 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-blood-400",
-                    checked
+                    option.disabled
+                      ? "cursor-not-allowed border-white/5 bg-white/[0.02] opacity-40"
+                      : option.checked
                       ? "border-blood bg-blood/10 shadow-[0_0_24px_-8px_rgba(229,9,20,0.9)]"
                       : "border-white/10 bg-white/[0.02] hover:border-white/25",
                   )}
@@ -601,28 +944,36 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
                   <input
                     type="radio"
                     name="bk-service"
-                    value={s.id}
-                    checked={checked}
-                    onChange={() => update({ service: s.id })}
+                    value={option.key}
+                    checked={option.checked}
+                    disabled={option.disabled}
+                    onChange={() => update({ service: option.service, pricingId: option.pricingId })}
                     className="sr-only"
                   />
                   <span className="flex items-center justify-between">
-                    <Icon className={cn("h-5 w-5", checked ? "text-blood-400" : "text-white/60")} />
+                    <Icon className={cn("h-5 w-5", option.checked ? "text-blood-400" : "text-white/60")} />
                     <span
                       className={cn(
                         "grid h-4 w-4 place-items-center rounded-full border",
-                        checked ? "border-blood bg-blood" : "border-white/25",
+                        option.checked ? "border-blood bg-blood" : "border-white/25",
                       )}
                     >
-                      {checked && <Check className="h-2.5 w-2.5" strokeWidth={4} />}
+                      {option.checked && <Check className="h-2.5 w-2.5" strokeWidth={4} />}
                     </span>
                   </span>
-                  <span className="mt-2.5 font-tech text-sm font-bold uppercase tracking-wider">{s.short}</span>
-                  <span className="text-xs text-white/55">{priceLabel}</span>
+                  <span className="mt-2.5 font-tech text-sm font-bold uppercase tracking-wider">{option.label}</span>
+                  <span className="text-xs text-white/55">{option.priceLabel}</span>
                 </label>
               );
             })}
           </div>
+          {isConsole && consolePackages.length === 0 && (
+            <p className="mt-3 text-sm text-white/50" role="status">
+              {backendConnected
+                ? `No active packages are configured for ${form.consolePref}.`
+                : "Pricing is unavailable while the booking service is offline."}
+            </p>
+          )}
         </fieldset>
 
         <fieldset>
@@ -696,21 +1047,73 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
                     className="field mt-2"
                     value={form.time}
                     onChange={(e) => update({ time: e.target.value })}
+                    disabled={isConsole && (availabilityLoading || !availabilityReady || availableSlotsCount === 0)}
                     aria-invalid={Boolean(errors.time)}
                     aria-describedby={errors.time ? "bk-time-err" : undefined}
                   >
-                    {slots.length === 0 ? (
-                      <option value="">No slots left — pick another date</option>
-                    ) : (
-                      slots.map((slot) => (
-                        <option key={slot.value} value={slot.value}>
+                    <option value="">
+                      {isConsole && availabilityLoading
+                        ? "Loading available times..."
+                        : isConsole && (!availabilityReady || availabilityError)
+                          ? "Availability unavailable"
+                          : isConsole && availableSlotsCount === 0
+                            ? "No available slots for this date"
+                            : slots.length === 0
+                              ? "No slots left — pick another date"
+                              : "Choose a time"}
+                    </option>
+                    {slots.map((slot) => {
+                      const available = isTimeAvailable(slot.value);
+                      return (
+                        <option key={slot.value} value={slot.value} disabled={isConsole && !available}>
                           {slot.label}
                           {slot.peak ? " · Peak" : ""}
+                          {isConsole && !available ? " · Unavailable" : ""}
                         </option>
-                      ))
-                    )}
+                      );
+                    })}
                   </select>
                   <FieldError id="bk-time-err" message={errors.time} />
+                  {isConsole && availabilityLoading && (
+                    <p className="mt-2 font-tech text-xs text-white/55" role="status">
+                      Checking availability for {form.consolePref}...
+                    </p>
+                  )}
+                  {isConsole && availabilityError && (
+                    <div className="mt-2 flex items-center justify-between gap-3" role="alert">
+                      <p className="font-tech text-xs text-blood-300">{availabilityError}</p>
+                      <button
+                        type="button"
+                        onClick={() => setAvailabilityRetry((retry) => retry + 1)}
+                        className="font-tech text-xs font-bold uppercase tracking-wider text-white underline underline-offset-2"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  {availabilityUnavailable && (
+                    <div className="mt-2 flex items-center justify-between gap-3" role="alert">
+                      <p className="font-tech text-xs text-blood-300">
+                        Could not determine availability for this console.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setAvailabilityRetry((retry) => retry + 1)}
+                        className="font-tech text-xs font-bold uppercase tracking-wider text-white underline underline-offset-2"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  {isConsole &&
+                    !availabilityLoading &&
+                    !availabilityError &&
+                    availabilityReady &&
+                    availableSlotsCount === 0 && (
+                      <p className="mt-2 font-tech text-xs text-white/55" role="status">
+                        No available slots for this date.
+                      </p>
+                    )}
                 </div>
               </>
             )}
@@ -719,8 +1122,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
               <div>
                 <span className={LABEL}>Package duration</span>
                 <output className="mt-2 flex h-12 items-center rounded-xl border border-white/10 bg-black/45 px-4 font-display text-base font-bold">
-                  {formatDuration(service.durationMins)}
-                  <span className="ml-2 font-tech text-xs font-semibold uppercase tracking-wide text-white/45">Fixed package</span>
+                  {selectedPricing ? formatDuration(selectedPricing.duration_minutes) : "Unavailable"}
                 </output>
               </div>
             )}
@@ -878,7 +1280,7 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
           <div aria-hidden="true" className="my-4 h-px bg-white/10" />
           <div className="flex items-end justify-between gap-3">
             <span className="font-tech text-xs font-bold uppercase tracking-[0.24em] text-white/45">
-              {estimate !== null ? "Estimated total" : "Entry details"}
+              {estimate !== null ? "Estimated total" : service.kind === "tournament" ? "Entry details" : "Pricing unavailable"}
             </span>
             {estimate !== null ? (
               <span className="font-display text-2xl font-black">
@@ -886,10 +1288,12 @@ function BookingForm({ prefill, onClose }: { prefill: BookingPrefill; onClose: (
                 {estimate}
               </span>
             ) : (
-              <span className="font-tech text-sm font-bold uppercase tracking-wider text-white/70">On WhatsApp</span>
+              <span className="font-tech text-sm font-bold uppercase tracking-wider text-white/70">
+                {service.kind === "tournament" ? "On WhatsApp" : "Unavailable"}
+              </span>
             )}
           </div>
-          <p className="mt-2 text-xs text-white/45">{service.note}</p>
+          <p className="mt-2 text-xs text-white/45">{bookingServiceNote}</p>
           <Button type="submit" disabled={submitting} className="mt-5 w-full">
             <Gamepad2 />
             {submitting

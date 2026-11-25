@@ -6,20 +6,19 @@ import { useBooking } from "@/context/booking";
 import { cn } from "@/utils/cn";
 import { Button } from "./ui/Button";
 import { OpenStatus } from "./ui/OpenStatus";
-import { Rupee } from "./ui/Rupee";
 import { CircleShape, CrossShape, SquareShape, /* SteeringWheelIcon, */ TriangleShape } from "./ui/icons";
 
 type IconType = ComponentType<{ className?: string }>;
 
 const STATS: { icon: IconType; value: ReactNode; label: string }[] = [
   { icon: Gamepad2, value: "2 Consoles", label: "1x PS4 · 1x PS4 Pro" },
-  { icon: Zap, value: <><Rupee />70–90/hr</>, label: "Starting rates" },
+  { icon: Zap, value: "Live Rates", label: "See Pricing Packages" },
   { icon: Clock, value: "10AM–10PM", label: "Open daily" },
 ];
 
 const CHIPS: { icon: IconType; title: string; sub: string; position: string; delay: string }[] = [
-  { icon: Cpu, title: "PS4 Pro", sub: "₹90/hr · 4K visuals", position: "-left-10 top-12", delay: "0s" },
-  { icon: Gamepad2, title: "PS4", sub: "₹70/hr · Full HD", position: "-right-8 top-[46%]", delay: "-2.3s" },
+  { icon: Cpu, title: "PS4 Pro", sub: "4K visuals", position: "-left-10 top-12", delay: "0s" },
+  { icon: Gamepad2, title: "PS4", sub: "Full HD", position: "-right-8 top-[46%]", delay: "-2.3s" },
   { icon: Crown, title: "Tournaments", sub: "Get crowned", position: "-left-2 bottom-8", delay: "-4.6s" },
 ];
 

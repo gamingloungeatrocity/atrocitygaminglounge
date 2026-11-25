@@ -6,8 +6,8 @@ import { Logo } from "./ui/Logo";
 import { WhatsAppIcon } from "./ui/icons";
 
 const EXPERIENCES = [
-  { label: "PS4 Gaming (₹70/hr)", href: "#consoles" },
-  { label: "PS4 Pro Gaming (₹90/hr)", href: "#consoles" },
+  { label: "PS4 Gaming", href: "#consoles" },
+  { label: "PS4 Pro Gaming", href: "#consoles" },
   { label: "Game Library", href: "#games" },
   { label: "Pricing Packages", href: "#pricing" },
   { label: "Group Events", href: "#events" },
@@ -60,8 +60,7 @@ export function Footer() {
               <Logo size="lg" />
             </a>
             <p className="mt-5 max-w-sm text-sm leading-relaxed text-white/55">
-              Two dedicated gaming stations — PlayStation 4 (₹70/hr) and PlayStation 4 Pro (₹90/hr), group events and local
-              tournaments — all under one roof in Kavindapadi, Erode.
+                Two dedicated gaming stations, group events and local tournaments — all under one roof in Kavindapadi, Erode.
             </p>
             <p className="mt-6 font-display text-sm font-black tracking-[0.3em] text-blood text-glow-sm">{BUSINESS.tagline}</p>
             <div className="mt-6 flex gap-3">

@@ -364,11 +364,13 @@ export const api = {
 
   public: {
     getConsoles: () => request<ConsoleRecord[]>("/api/consoles"),
-    getPricing: () => request<PricingRecord[]>("/api/pricing"),
+    getPricing: () => request<PricingRecord[]>("/api/pricing", { cache: "no-store" }),
     getTournaments: () => request<TournamentRecord[]>("/api/tournaments"),
     getGames: () => request<GameRecord[]>("/api/games"),
     getAvailability: (date: string, duration = 60, step = 30) =>
-      request<AvailabilityResponse>(`/api/availability?date=${encodeURIComponent(date)}&duration=${duration}&step=${step}`),
+      request<AvailabilityResponse>(`/api/availability?date=${encodeURIComponent(date)}&duration=${duration}&step=${step}`, {
+        cache: "no-store",
+      }),
     createBooking: (body: {
       customer_name: string;
       customer_phone: string;
@@ -398,7 +400,12 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body),
       }),
-    createCashfreeOrder: (body: { booking_type: "console" | "group" | "tournament"; record_id: string }) =>
+    createCashfreeOrder: (body: {
+      booking_type: "console" | "group" | "tournament";
+      record_id: string;
+      reference: string;
+      customer_phone: string;
+    }) =>
       request<{
         order_id: string;
         cf_order_id: string;
@@ -408,7 +415,7 @@ export const api = {
         payment_id: string;
         environment: string;
       }>("/api/payments/cashfree/order", { method: "POST", body: JSON.stringify(body) }),
-    verifyCashfreeOrder: (body: { order_id: string }) =>
+    verifyCashfreeOrder: (body: { order_id: string; reference: string; customer_phone: string }) =>
       request<PaymentRecord>("/api/payments/cashfree/verify", { method: "POST", body: JSON.stringify(body) }),
   },
 
@@ -521,7 +528,7 @@ export const api = {
     deleteGame: (id: string) => request<{ deleted: boolean }>(`/api/admin/games/${id}`, { method: "DELETE", auth: true }),
     exportTournamentRegistrationsCsv: (tournamentId: string) =>
       request<string>(`/api/admin/tournaments/${tournamentId}/registrations/export`, { auth: true }),
-    getPricing: () => request<PricingRecord[]>("/api/admin/pricing", { auth: true }),
+    getPricing: () => request<PricingRecord[]>("/api/admin/pricing", { auth: true, cache: "no-store" }),
     upsertPricing: (body: Partial<PricingRecord>) =>
       request<PricingRecord>("/api/admin/pricing", { method: "PUT", auth: true, body: JSON.stringify(body) }),
     deletePricing: (id: string) => request<{ deleted: boolean }>(`/api/admin/pricing/${id}`, { method: "DELETE", auth: true }),

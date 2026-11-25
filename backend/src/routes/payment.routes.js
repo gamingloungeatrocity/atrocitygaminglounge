@@ -1,4 +1,5 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { paymentController } from "../controllers/payment.controller.js";
 import { authenticate } from "../middleware/authenticate.js";
@@ -7,13 +8,24 @@ import { validateBody } from "../middleware/validateRequest.js";
 
 const router = Router();
 
+const onlinePaymentLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const cashfreeOrderSchema = z.object({
   booking_type: z.enum(["console", "group", "tournament"]),
   record_id: z.string().uuid(),
+  reference: z.string().min(3).max(40),
+  customer_phone: z.string().min(10).max(18),
 });
 
 const cashfreeVerifySchema = z.object({
   order_id: z.string().min(3),
+  reference: z.string().min(3).max(40),
+  customer_phone: z.string().min(10).max(18),
 });
 
 const offlineSchema = z.object({
@@ -28,8 +40,8 @@ const statusSchema = z.object({
 });
 
 // Public online Cashfree initiation, backend verification & webhook
-router.post("/payments/cashfree/order", validateBody(cashfreeOrderSchema), paymentController.createCashfreeOrder);
-router.post("/payments/cashfree/verify", validateBody(cashfreeVerifySchema), paymentController.verifyCashfreeOrder);
+router.post("/payments/cashfree/order", onlinePaymentLimiter, validateBody(cashfreeOrderSchema), paymentController.createCashfreeOrder);
+router.post("/payments/cashfree/verify", onlinePaymentLimiter, validateBody(cashfreeVerifySchema), paymentController.verifyCashfreeOrder);
 router.post("/payments/cashfree/webhook", paymentController.handleCashfreeWebhook);
 
 // Staff & Admin offline cash/UPI payment recording

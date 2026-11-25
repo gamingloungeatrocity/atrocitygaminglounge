@@ -29,7 +29,7 @@ export const availabilityService = {
   async getAvailability({ date, durationMinutes = 60, stepMinutes = 30 }) {
     const todayIst = getIstTodayYmd();
     const targetDate = date || todayIst.ymd;
-    const duration = Math.max(30, Math.min(Number(durationMinutes) || 60, 720));
+    const duration = Math.max(1, Math.min(Number(durationMinutes) || 60, 720));
     const step = stepMinutes === 60 ? 60 : 30;
 
     const [consoles, settings] = await Promise.all([

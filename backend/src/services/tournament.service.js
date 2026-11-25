@@ -107,6 +107,9 @@ export const tournamentService = {
       throw new ApiError(400, "INVALID_PHONE", "Please enter a valid 10-digit Indian mobile number.");
     }
 
+    const tournament = await tournamentRepository.findById(tournamentId);
+    if (!tournament) throw new ApiError(404, "NOT_FOUND", "Tournament not found.");
+
     const reg = await tournamentRepository.registerAtomic({
       p_registration_code: generateCode("TRN"),
       p_tournament_id: tournamentId,
@@ -117,7 +120,15 @@ export const tournamentService = {
       p_notes: input.notes || null,
     });
 
-    return reg;
+    return {
+      ...reg,
+      tournaments: {
+        id: tournament.id,
+        title: tournament.title,
+        game_name: tournament.game_name,
+        entry_fee: Number(tournament.entry_fee),
+      },
+    };
   },
 
   async listRegistrations(tournamentId, filters) {

@@ -7,6 +7,7 @@ import { Rupee } from "@/components/ui/Rupee";
 import { useToast } from "@/components/ui/Toast";
 import { api, ApiClientError, type PricingRecord } from "@/lib/api";
 import { PanelLoader, StatusBadge } from "@/components/dashboard/StatusBadge";
+import { usePublicData } from "@/context/publicData";
 
 const CATEGORY_TITLES: Record<PricingRecord["category"], string> = {
   ps4: "PlayStation 4 Price Per Player",
@@ -21,13 +22,14 @@ const EMPTY_PLAN = {
   label: "",
   duration_minutes: 60,
   bonus_minutes: 0,
-  price: 70,
+  price: "" as number | "",
   is_active: true,
   sort_order: 1,
 };
 
 export function AdminPricing({ onChanged }: { onChanged?: () => void }) {
   const toast = useToast();
+  const { refresh: refreshPublicData } = usePublicData();
   const [items, setItems] = useState<PricingRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -72,6 +74,11 @@ export function AdminPricing({ onChanged }: { onChanged?: () => void }) {
 
   const handleSave = async (e: FormEvent) => {
     e.preventDefault();
+    const price = Number(form.price);
+    if (form.price === "" || !Number.isFinite(price) || price < 0) {
+      toast.error("Enter a valid configured price.");
+      return;
+    }
     setBusy(true);
     try {
       await api.admin.upsertPricing({
@@ -80,13 +87,13 @@ export function AdminPricing({ onChanged }: { onChanged?: () => void }) {
         label: form.label,
         duration_minutes: Number(form.duration_minutes),
         bonus_minutes: Number(form.bonus_minutes),
-        price: Number(form.price),
+        price,
         is_active: form.is_active,
         sort_order: Number(form.sort_order),
       });
       toast.success("Pricing saved. Future bookings use the new rate; past bookings remain unchanged.");
       setEditorOpen(false);
-      load();
+      await Promise.all([load(), refreshPublicData()]);
       onChanged?.();
     } catch (err) {
       toast.error(err instanceof ApiClientError ? err.message : "Failed to save pricing rule.");
@@ -102,7 +109,7 @@ export function AdminPricing({ onChanged }: { onChanged?: () => void }) {
       await api.admin.deletePricing(deleteTarget.id);
       toast.success("Pricing rule deleted.");
       setDeleteTarget(null);
-      load();
+      await Promise.all([load(), refreshPublicData()]);
       onChanged?.();
     } catch (err) {
       toast.error(err instanceof ApiClientError ? err.message : "Failed to delete pricing rule.");
@@ -245,7 +252,7 @@ export function AdminPricing({ onChanged }: { onChanged?: () => void }) {
                 step="0.01"
                 required
                 value={form.price}
-                onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
+                onChange={(e) => setForm({ ...form, price: e.target.value === "" ? "" : Number(e.target.value) })}
                 className="field mt-2"
               />
             </div>

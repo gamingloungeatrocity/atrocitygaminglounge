@@ -42,6 +42,18 @@ export const paymentRepository = {
     return data;
   },
 
+  async applyCashfreeStatus({ paymentId, paymentStatus, cashfreePaymentId, paidAt, metadata }) {
+    const { data, error } = await getSupabaseAdmin().rpc("apply_cashfree_payment_status", {
+      p_payment_id: paymentId,
+      p_payment_status: paymentStatus,
+      p_cashfree_payment_id: cashfreePaymentId || null,
+      p_paid_at: paidAt || null,
+      p_metadata: metadata || {},
+    });
+    if (error) throw error;
+    return data;
+  },
+
   async findAll({ status, method, bookingType, fromDate, toDate } = {}) {
     let query = getSupabaseAdmin()
       .from("payments")

@@ -167,7 +167,7 @@ export function buildSlots(ymd: string, durationMins: number, stepMins: number, 
   if (!ymd) return [];
   const openAt = OPEN_HOUR * 60;
   const closeAt = CLOSE_HOUR * 60;
-  const duration = Math.max(30, Math.min(durationMins || 60, closeAt - openAt));
+  const duration = Math.max(1, Math.min(durationMins || 60, closeAt - openAt));
   const isPastDay = ymd < now.ymd;
   const isToday = ymd === now.ymd;
   const weekday = weekdayOfYmd(ymd);

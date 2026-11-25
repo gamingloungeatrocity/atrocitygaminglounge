@@ -3,6 +3,7 @@ import { ArrowRight, BadgePercent, Check, Clock, Crown, Hourglass, Trophy, Users
 import { PRICING, type PricingPlan, type ServiceId } from "@/data/site";
 import { useBooking } from "@/context/booking";
 import { usePublicData } from "@/context/publicData";
+import type { PricingRecord } from "@/lib/api";
 import { cn } from "@/utils/cn";
 import { Button } from "./ui/Button";
 import { PriceCounter } from "./ui/PriceCounter";
@@ -20,30 +21,56 @@ const ICONS: Record<ServiceId, ComponentType<{ className?: string }>> = {
 
 type ConsoleTab = "ps4" | "ps4pro";
 
-function PlanCard({ plan, consoleTab }: { plan: PricingPlan; consoleTab: ConsoleTab }) {
+interface ActivePricingPlan {
+  record: PricingRecord;
+  template?: PricingPlan;
+  ps4Record?: PricingRecord;
+  ps4ProRecord?: PricingRecord;
+  savings?: string;
+}
+
+function serviceForDuration(durationMinutes: number): ServiceId {
+  if (durationMinutes === 180) return "pack3";
+  if (durationMinutes === 300) return "daypass";
+  return "hourly";
+}
+
+function durationLabel(durationMinutes: number): string {
+  if (durationMinutes % 60 === 0) {
+    const hours = durationMinutes / 60;
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  return `${durationMinutes} minutes`;
+}
+
+function PlanCard({ plan, consoleTab }: { plan: ActivePricingPlan; consoleTab: ConsoleTab }) {
   const { openBooking } = useBooking();
-  const Icon = ICONS[plan.id];
+  const { record, template, ps4Record, ps4ProRecord } = plan;
+  const Icon = ICONS[serviceForDuration(record.duration_minutes)];
   const isPro = consoleTab === "ps4pro";
-  const activePrice = isPro ? plan.ps4ProPrice : plan.ps4Price;
-  const activeSavings = isPro ? plan.ps4ProSavings : plan.ps4Savings;
+  const activePrice = Number(record.price);
   const consolePref = isPro ? "PS4 Pro" : "PS4";
   const features = [
-    ...(plan.bonusMinutes && plan.bonusMinutes > 0 ? [`${plan.bonusMinutes} mins bonus play time`] : []),
-    ...plan.features.filter((feature) => !/bonus play time/i.test(feature)),
+    ...(record.bonus_minutes > 0 ? [`${record.bonus_minutes} mins bonus play time`] : []),
+    ...(template?.features ?? ["Access to full game library", "DualShock 4 controllers"]).filter(
+      (feature) => !/bonus play time/i.test(feature),
+    ),
   ];
+  const name = record.label.trim() || template?.name || `${durationLabel(record.duration_minutes)} Session`;
+  const unit = template?.unit ?? `/ ${durationLabel(record.duration_minutes).toLowerCase()}`;
 
   return (
     <article
       className={cn(
         "group relative flex h-full flex-col rounded-2xl border p-6 transition-all duration-300 hover:-translate-y-1.5 sm:p-7",
-        plan.featured
+        template?.featured
           ? "neon-frame border-transparent bg-linear-to-b from-blood/[0.16] to-coal shadow-[0_30px_80px_-30px_rgba(229,9,20,0.75)]"
           : "border-white/10 bg-coal hover:border-blood/50 hover:shadow-[0_24px_60px_-24px_rgba(229,9,20,0.55)]",
       )}
     >
-      {plan.badge && (
+      {template?.badge && (
         <span className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-blood px-3.5 py-1 font-tech text-xs font-bold uppercase tracking-[0.2em] shadow-[0_0_20px_rgba(229,9,20,0.6)]">
-          {plan.badge}
+          {template.badge}
         </span>
       )}
 
@@ -51,36 +78,48 @@ function PlanCard({ plan, consoleTab }: { plan: PricingPlan; consoleTab: Console
         <span
           className={cn(
             "grid h-12 w-12 place-items-center rounded-xl border transition-transform duration-300 group-hover:scale-110",
-            plan.featured ? "border-blood/50 bg-blood/15 text-blood-300" : "border-white/10 bg-white/[0.04] text-white/80",
+            template?.featured ? "border-blood/50 bg-blood/15 text-blood-300" : "border-white/10 bg-white/[0.04] text-white/80",
           )}
         >
           <Icon className="h-6 w-6" />
         </span>
-        <span className="font-tech text-xs font-bold uppercase tracking-[0.26em] text-white/40">{plan.category}</span>
+        <span className="font-tech text-xs font-bold uppercase tracking-[0.26em] text-white/40">
+          {template?.category ?? "Configured Package"}
+        </span>
       </div>
 
-      <h3 className="mt-6 font-display text-lg font-black uppercase tracking-wide">{plan.name}</h3>
-      <p className="mt-1.5 text-sm text-white/55">{plan.tagline}</p>
+      <h3 className="mt-6 font-display text-lg font-black uppercase tracking-wide">{name}</h3>
+      <p className="mt-1.5 text-sm text-white/55">
+        {template?.tagline ?? "A session package configured by the lounge."}
+      </p>
 
       {/* Main price */}
       <div className="mt-6 flex items-end gap-2">
         <span className="font-display text-5xl font-black leading-none tracking-tight">
           <PriceCounter value={activePrice} rupeeClassName="text-[0.8em]" />
         </span>
-        <span className="pb-1 font-tech text-base font-semibold text-white/55">{plan.unit}</span>
+        <span className="pb-1 font-tech text-base font-semibold text-white/55">{unit}</span>
       </div>
 
       {/* Dual rate breakdown tag */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-black/40 px-2 py-1 font-tech text-xs text-white/70">
-          <span className={cn("font-bold", !isPro && "text-blood-300")}>PS4: ₹{plan.ps4Price}</span>
-          <span className="text-white/25">·</span>
-          <span className={cn("font-bold", isPro && "text-blood-300")}>PS4 Pro: ₹{plan.ps4ProPrice}</span>
+          {ps4Record && ps4ProRecord ? (
+            <>
+              <span className={cn("font-bold", !isPro && "text-blood-300")}>PS4: ₹{Number(ps4Record.price)}</span>
+              <span className="text-white/25">·</span>
+              <span className={cn("font-bold", isPro && "text-blood-300")}>PS4 Pro: ₹{Number(ps4ProRecord.price)}</span>
+            </>
+          ) : (
+            <span className="font-bold text-blood-300">
+              {consolePref}: ₹{activePrice} / player
+            </span>
+          )}
         </span>
-        {activeSavings && (
+        {plan.savings && (
           <span className="inline-flex items-center gap-1 rounded-md border border-blood/40 bg-blood/10 px-2 py-1 font-tech text-xs font-bold uppercase tracking-[0.14em] text-blood-300">
             <BadgePercent className="h-3 w-3" />
-            {activeSavings}
+            {plan.savings}
           </span>
         )}
       </div>
@@ -100,10 +139,10 @@ function PlanCard({ plan, consoleTab }: { plan: PricingPlan; consoleTab: Console
 
       <Button
         className="mt-8 w-full"
-        variant={plan.featured ? "primary" : "outline"}
-        onClick={() => openBooking({ service: plan.id, consolePref })}
+        variant={template?.featured ? "primary" : "outline"}
+        onClick={() => openBooking({ service: serviceForDuration(record.duration_minutes), consolePref, pricingId: record.id })}
       >
-        {plan.cta} ({consolePref})
+        {template?.cta ?? "Book Session"} ({consolePref})
       </Button>
     </article>
   );
@@ -114,54 +153,48 @@ export function Pricing() {
   const { pricing, backendConnected } = usePublicData();
   const [consoleTab, setConsoleTab] = useState<ConsoleTab>("ps4");
 
-  const livePricing: PricingPlan[] = (() => {
-    if (!backendConnected) return PRICING;
-
-    const activeConsolePricing = pricing.filter(
-      (record) => (record.category === "ps4" || record.category === "ps4pro") && record.is_active,
-    );
-    const durations = [...new Set(activeConsolePricing.map((record) => record.duration_minutes))].sort((a, b) => a - b);
-
-    return durations.map((duration, index) => {
-      const base = PRICING.find((plan) => {
-        const knownDuration = plan.id === "hourly" ? 60 : plan.id === "pack3" ? 180 : 300;
-        return knownDuration === duration;
-      });
-      const ps4Record = activeConsolePricing.find((record) => record.category === "ps4" && record.duration_minutes === duration);
-      const ps4ProRecord = activeConsolePricing.find(
-        (record) => record.category === "ps4pro" && record.duration_minutes === duration,
-      );
-      const fallbackPs4 = base?.ps4Price ?? 0;
-      const fallbackPs4Pro = base?.ps4ProPrice ?? 0;
-      const durationLabel = duration >= 60 && duration % 60 === 0 ? `${duration / 60} hour${duration === 60 ? "" : "s"}` : `${duration} mins`;
-
-      return {
-        ...(base ?? {
-          id: "hourly" as const,
-          name: `${durationLabel} Session`,
-          category: "Custom Session",
-          unit: `/ ${durationLabel.toLowerCase()}`,
-          tagline: "A flexible session configured by the lounge.",
-          features: ["Access to full game library", "DualShock 4 controllers"],
-          cta: "Book Session",
-        }),
-        id: base?.id ?? ("hourly" as const),
-        name: ps4Record?.label ?? ps4ProRecord?.label ?? `${durationLabel} Session`,
-        ps4Price: Number(ps4Record?.price ?? fallbackPs4),
-        ps4ProPrice: Number(ps4ProRecord?.price ?? fallbackPs4Pro),
-        bonusMinutes: Number(ps4Record?.bonus_minutes ?? ps4ProRecord?.bonus_minutes ?? base?.bonusMinutes ?? 0),
-        unit: base?.unit ?? `/ ${durationLabel.toLowerCase()}`,
-        featured: base?.featured ?? index === durations.length - 1,
-      };
+  const activeConsolePricing = backendConnected
+    ? pricing
+        .filter((record) => record.category === consoleTab && record.is_active && record.duration_minutes > 0)
+        .sort((a, b) => a.sort_order - b.sort_order || a.duration_minutes - b.duration_minutes)
+    : [];
+  const livePricing: ActivePricingPlan[] = activeConsolePricing.map((record) => {
+    const ps4Record = pricing.find((item) => item.category === "ps4" && item.duration_minutes === record.duration_minutes && item.is_active);
+    const ps4ProRecord = pricing.find((item) => item.category === "ps4pro" && item.duration_minutes === record.duration_minutes && item.is_active);
+    const template = PRICING.find((plan) => {
+      const duration = plan.id === "hourly" ? 60 : plan.id === "pack3" ? 180 : 300;
+      return duration === record.duration_minutes;
     });
-  })();
+    const hourlyRecord = pricing.find((item) => item.category === record.category && item.duration_minutes === 60 && item.is_active);
+    const savings = hourlyRecord && record.duration_minutes > 60
+      ? Math.round(Number(hourlyRecord.price) * (record.duration_minutes / 60) - Number(record.price))
+      : 0;
 
-  const wholeLoungePrice = pricing.find((p) => p.category === "whole_lounge" && p.is_active)?.price ?? 2500;
-  const ps4Hr = livePricing[0]?.ps4Price ?? 70;
-  const ps4ProHr = livePricing[0]?.ps4ProPrice ?? 90;
+    return {
+      record,
+      template,
+      ps4Record,
+      ps4ProRecord,
+      savings: savings > 0 ? `Save ₹${savings}` : undefined,
+    };
+  });
+  const hourlyPs4 = backendConnected ? pricing.find((p) => p.category === "ps4" && p.duration_minutes === 60 && p.is_active) : undefined;
+  const hourlyPs4Pro = backendConnected ? pricing.find((p) => p.category === "ps4pro" && p.duration_minutes === 60 && p.is_active) : undefined;
+  const wholeLoungePricing = backendConnected
+    ? pricing.find((p) => p.category === "whole_lounge" && p.duration_minutes === 180 && p.is_active) ??
+      pricing.find((p) => p.category === "whole_lounge" && p.is_active)
+    : undefined;
   const dynamicTabs: TabItem<ConsoleTab>[] = [
-    { id: "ps4", label: "PlayStation 4", icon: <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px]">₹{ps4Hr}/hr</span> },
-    { id: "ps4pro", label: "PlayStation 4 Pro", icon: <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px]">₹{ps4ProHr}/hr</span> },
+    {
+      id: "ps4",
+      label: "PlayStation 4",
+      icon: hourlyPs4 ? <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px]">₹{Number(hourlyPs4.price)}/hr</span> : undefined,
+    },
+    {
+      id: "ps4pro",
+      label: "PlayStation 4 Pro",
+      icon: hourlyPs4Pro ? <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px]">₹{Number(hourlyPs4Pro.price)}/hr</span> : undefined,
+    },
   ];
 
   return (
@@ -193,11 +226,19 @@ export function Pricing() {
         </Reveal>
 
         <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {livePricing.map((plan, i) => (
-            <Reveal key={`${plan.id}-${i}`} delay={i * 80} className="h-full">
-              <PlanCard plan={plan} consoleTab={consoleTab} />
-            </Reveal>
-          ))}
+          {livePricing.length > 0 ? (
+            livePricing.map((plan, i) => (
+              <Reveal key={plan.record.id} delay={i * 80} className="h-full">
+                <PlanCard plan={plan} consoleTab={consoleTab} />
+              </Reveal>
+            ))
+          ) : (
+            <p className="col-span-full rounded-2xl border border-white/10 bg-coal p-6 text-center text-sm text-white/55">
+              {backendConnected
+                ? "No active packages are configured for this console."
+                : "Live pricing is temporarily unavailable."}
+            </p>
+          )}
         </div>
 
         <Reveal className="mt-10">
@@ -212,7 +253,11 @@ export function Pricing() {
                 <h3 className="mt-1 font-display text-lg font-black uppercase sm:text-2xl">
                   Book the whole venue —{" "}
                   <span className="text-blood text-glow-sm">
-                    <PriceCounter value={Number(wholeLoungePrice)} />
+                    {wholeLoungePricing ? (
+                      <PriceCounter value={Number(wholeLoungePricing.price)} />
+                    ) : (
+                      "Unavailable"
+                    )}
                   </span>{" "}
                   flat
                 </h3>
@@ -220,7 +265,7 @@ export function Pricing() {
               </div>
             </div>
             <div className="relative flex flex-wrap gap-3">
-              <Button onClick={() => openBooking({ service: "group" })}>
+              <Button onClick={() => openBooking({ service: "group" })} disabled={!wholeLoungePricing}>
                 <Users /> Book Group Event
               </Button>
               <Button variant="ghost" href="#events">

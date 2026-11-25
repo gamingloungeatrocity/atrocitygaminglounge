@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CONSOLES, GAMES, PRICING } from "@/data/site";
+import { CONSOLES, GAMES } from "@/data/site";
 import { api, getApiBaseUrl, type ConsoleRecord, type GameRecord, type PricingRecord, type TournamentRecord } from "@/lib/api";
 
 interface PublicDataState {
@@ -22,18 +22,6 @@ const FALLBACK_CONSOLES: ConsoleRecord[] = CONSOLES.map((c) => ({
   effective_status: "available",
 }));
 
-const FALLBACK_PRICING: PricingRecord[] = [
-  ...PRICING.flatMap((p) => {
-    const mins = p.id === "hourly" ? 60 : p.id === "pack3" ? 180 : 300;
-    const bonus = p.id === "pack3" ? 15 : p.id === "daypass" ? 30 : 0;
-    return [
-      { id: `${p.id}-ps4`, category: "ps4" as const, label: p.name, duration_minutes: mins, bonus_minutes: bonus, price: p.ps4Price, is_active: true, sort_order: 1 },
-      { id: `${p.id}-ps4pro`, category: "ps4pro" as const, label: p.name, duration_minutes: mins, bonus_minutes: bonus, price: p.ps4ProPrice, is_active: true, sort_order: 1 },
-    ];
-  }),
-  { id: "wl-flat", category: "whole_lounge", label: "Whole Lounge (3 Hours)", duration_minutes: 180, bonus_minutes: 0, price: 2500, is_active: true, sort_order: 1 },
-];
-
 const FALLBACK_TOURNAMENTS: TournamentRecord[] = [];
 const FALLBACK_GAMES: GameRecord[] = GAMES.map((g, index) => ({
   id: g.id,
@@ -50,7 +38,7 @@ const FALLBACK_GAMES: GameRecord[] = GAMES.map((g, index) => ({
 
 const PublicDataContext = createContext<PublicDataState>({
   consoles: FALLBACK_CONSOLES,
-  pricing: FALLBACK_PRICING,
+  pricing: [],
   tournaments: FALLBACK_TOURNAMENTS,
   games: FALLBACK_GAMES,
   backendConnected: false,
@@ -59,7 +47,7 @@ const PublicDataContext = createContext<PublicDataState>({
 
 export function PublicDataProvider({ children }: { children: ReactNode }) {
   const [consoles, setConsoles] = useState<ConsoleRecord[]>(FALLBACK_CONSOLES);
-  const [pricing, setPricing] = useState<PricingRecord[]>(FALLBACK_PRICING);
+  const [pricing, setPricing] = useState<PricingRecord[]>([]);
   const [tournaments, setTournaments] = useState<TournamentRecord[]>(FALLBACK_TOURNAMENTS);
   const [games, setGames] = useState<GameRecord[]>(FALLBACK_GAMES);
   const [backendConnected, setBackendConnected] = useState(false);
@@ -85,6 +73,7 @@ export function PublicDataProvider({ children }: { children: ReactNode }) {
       if (Array.isArray(g)) setGames(g);
       setBackendConnected(true);
     } catch {
+      setPricing([]);
       setBackendConnected(false);
     }
   }, []);

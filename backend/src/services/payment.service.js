@@ -6,9 +6,122 @@ import { paymentRepository } from "../repositories/payment.repository.js";
 import { tournamentRepository } from "../repositories/tournament.repository.js";
 import { recordAuditLog } from "../utils/audit.js";
 import { ApiError, generateCode } from "../utils/errors.js";
+import { normalizeIndianPhone } from "../utils/time.js";
 
 function getCashfreeBaseUrl() {
-  return env.cashfreeEnv === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg";
+  return "https://sandbox.cashfree.com/pg";
+}
+
+export function matchesPaymentReference(record, { reference, customer_phone }) {
+  const recordReference = record.booking_code || record.registration_code;
+  const recordPhone = normalizeIndianPhone(record.customer_phone || record.phone);
+  const submittedPhone = normalizeIndianPhone(customer_phone);
+  return Boolean(
+    recordReference &&
+    recordReference === String(reference || "").trim() &&
+    recordPhone &&
+    recordPhone === submittedPhone
+  );
+}
+
+function assertPaymentOwner(record, input) {
+  if (!matchesPaymentReference(record, input)) {
+    throw new ApiError(404, "BOOKING_REFERENCE_MISMATCH", "Booking reference or phone number did not match.");
+  }
+}
+
+function assertPayableRecord(bookingType, record) {
+  if (record.payment_status === "paid") {
+    throw new ApiError(400, "ALREADY_PAID", "This booking or registration is already paid.");
+  }
+  if (
+    (bookingType === "console" && record.booking_status === "cancelled") ||
+    (bookingType === "group" && ["rejected", "cancelled"].includes(record.booking_status)) ||
+    (bookingType === "tournament" && ["rejected", "cancelled"].includes(record.registration_status))
+  ) {
+    throw new ApiError(400, "NOT_PAYABLE", "This booking or registration is no longer payable.");
+  }
+}
+
+async function findLinkedRecord(payment) {
+  if (payment.booking_id) return bookingRepository.findById(payment.booking_id);
+  if (payment.group_booking_id) return groupBookingRepository.findById(payment.group_booking_id);
+  if (payment.tournament_registration_id) {
+    return tournamentRepository.findRegistrationById(payment.tournament_registration_id);
+  }
+  return null;
+}
+
+export function cashfreeOrderMatchesPayment(order, amountInr, currency = "INR") {
+  const amount = Math.round(Number(order.order_amount) * 100);
+  const expected = Math.round(Number(amountInr) * 100);
+  return Number.isFinite(amount) && amount === expected && order.order_currency === currency;
+}
+
+function assertCashfreeAmount(order, payment) {
+  if (!cashfreeOrderMatchesPayment(order, payment.amount, payment.currency)) {
+    throw new ApiError(400, "PAYMENT_AMOUNT_MISMATCH", "Cashfree order amount or currency did not match the saved payment.");
+  }
+}
+
+async function applyCashfreeStatus(payment, paymentStatus, metadata = {}, cashfreePaymentId = null) {
+  return paymentRepository.applyCashfreeStatus({
+    paymentId: payment.id,
+    paymentStatus,
+    cashfreePaymentId,
+    paidAt: paymentStatus === "paid" ? new Date().toISOString() : null,
+    metadata,
+  });
+}
+
+async function reconcileCashfreeOrder(payment) {
+  const baseUrl = getCashfreeBaseUrl();
+  const headers = {
+    "x-client-id": env.cashfreeAppId,
+    "x-client-secret": env.cashfreeSecretKey,
+    "x-api-version": env.cashfreeApiVersion || "2023-08-01",
+    Accept: "application/json",
+  };
+  const cfRes = await fetch(`${baseUrl}/orders/${encodeURIComponent(payment.cashfree_order_id)}`, {
+    method: "GET",
+    headers,
+  });
+  if (!cfRes.ok) {
+    throw new ApiError(502, "CASHFREE_VERIFICATION_FAILED", "Could not verify order with Cashfree.");
+  }
+
+  const orderData = await cfRes.json();
+  assertCashfreeAmount(orderData, payment);
+  const status = String(orderData.order_status || "").toUpperCase();
+  if (status === "PAID") {
+    return applyCashfreeStatus(
+      payment,
+      "paid",
+      { cashfree_order_data: orderData },
+      String(orderData.cf_payment_id || ""),
+    );
+  }
+
+  if (["EXPIRED", "TERMINATED", "FAILED"].includes(status)) {
+    return applyCashfreeStatus(payment, "failed", { cashfree_status: status });
+  }
+
+  if (status === "ACTIVE") {
+    const paymentsResponse = await fetch(
+      `${baseUrl}/orders/${encodeURIComponent(payment.cashfree_order_id)}/payments`,
+      { method: "GET", headers },
+    );
+    if (paymentsResponse.ok) {
+      const attempts = await paymentsResponse.json();
+      const latestAttempt = Array.isArray(attempts) ? attempts[attempts.length - 1] : null;
+      if (attempts.length > 0 && attempts.every((attempt) => attempt.payment_status === "FAILED")) {
+        return applyCashfreeStatus(payment, "failed", { cashfree_payment_details: latestAttempt });
+      }
+    }
+    return payment;
+  }
+
+  return applyCashfreeStatus(payment, "failed", { cashfree_status: status || "UNKNOWN" });
 }
 
 /**
@@ -33,7 +146,7 @@ export const paymentService = {
   /**
    * Creates a Cashfree payment order and session for frontend checkout.
    */
-  async createCashfreeOrder({ booking_type, record_id }) {
+  async createCashfreeOrder({ booking_type, record_id, reference, customer_phone }) {
     if (!env.cashfreeAppId || !env.cashfreeSecretKey) {
       throw new ApiError(
         503,
@@ -46,6 +159,7 @@ export const paymentService = {
     let customerName = "Gamer";
     let customerPhone = "9999999999";
     let customerEmail = "guest@atrocitygaming.example";
+    let record;
     const linkColumns = {
       booking_id: null,
       group_booking_id: null,
@@ -53,34 +167,32 @@ export const paymentService = {
     };
 
     if (booking_type === "console") {
-      const b = await bookingRepository.findById(record_id);
-      if (!b) throw new ApiError(404, "NOT_FOUND", "Booking not found.");
-      if (b.payment_status === "paid") throw new ApiError(400, "ALREADY_PAID", "Booking is already paid.");
-      amountInr = Number(b.total_amount);
-      customerName = b.customer_name || customerName;
-      customerPhone = b.customer_phone || customerPhone;
-      customerEmail = b.customer_email || customerEmail;
-      linkColumns.booking_id = b.id;
+      record = await bookingRepository.findById(record_id);
+      if (!record) throw new ApiError(404, "NOT_FOUND", "Booking not found.");
+      amountInr = Number(record.total_amount);
+      customerName = record.customer_name || customerName;
+      customerPhone = record.customer_phone || customerPhone;
+      linkColumns.booking_id = record.id;
     } else if (booking_type === "group") {
-      const g = await groupBookingRepository.findById(record_id);
-      if (!g) throw new ApiError(404, "NOT_FOUND", "Whole lounge booking not found.");
-      if (g.payment_status === "paid") throw new ApiError(400, "ALREADY_PAID", "Whole lounge booking is already paid.");
-      amountInr = Number(g.total_amount);
-      customerName = g.contact_name || customerName;
-      customerPhone = g.contact_phone || customerPhone;
-      customerEmail = g.contact_email || customerEmail;
-      linkColumns.group_booking_id = g.id;
+      record = await groupBookingRepository.findById(record_id);
+      if (!record) throw new ApiError(404, "NOT_FOUND", "Whole lounge booking not found.");
+      amountInr = Number(record.total_amount);
+      customerName = record.customer_name || customerName;
+      customerPhone = record.customer_phone || customerPhone;
+      linkColumns.group_booking_id = record.id;
     } else if (booking_type === "tournament") {
-      const regs = await tournamentRepository.findRegistrations("all", {});
-      const reg = regs.find((r) => r.id === record_id);
-      if (!reg) throw new ApiError(404, "NOT_FOUND", "Tournament registration not found.");
-      amountInr = Number(reg.tournaments?.entry_fee || 0);
-      customerName = reg.participant_name || customerName;
-      customerPhone = reg.phone || customerPhone;
-      linkColumns.tournament_registration_id = reg.id;
+      record = await tournamentRepository.findRegistrationById(record_id);
+      if (!record) throw new ApiError(404, "NOT_FOUND", "Tournament registration not found.");
+      amountInr = Number(record.tournaments?.entry_fee || 0);
+      customerName = record.participant_name || customerName;
+      customerPhone = record.phone || customerPhone;
+      linkColumns.tournament_registration_id = record.id;
     } else {
       throw new ApiError(400, "INVALID_BOOKING_TYPE", "Unsupported booking type for online payment.");
     }
+
+    assertPaymentOwner(record, { reference, customer_phone });
+    assertPayableRecord(booking_type, record);
 
     if (amountInr <= 0) {
       throw new ApiError(400, "ZERO_AMOUNT", "No payment required for zero-fee registration.");
@@ -107,8 +219,8 @@ export const paymentService = {
         customer_email: customerEmail || "guest@atrocitygaming.example",
       },
       order_meta: {
-        return_url: `${env.frontendUrl}/?cf_order_id={order_id}`,
-        notify_url: `${env.frontendUrl.replace(/:\d+$/, ":5000")}/api/payments/cashfree/webhook`,
+        return_url: `${env.frontendUrl.replace(/\/+$/, "")}/?cf_order_id={order_id}`,
+        ...(env.cashfreeWebhookUrl ? { notify_url: env.cashfreeWebhookUrl } : {}),
       },
       order_note: `Atrocity Lounge ${booking_type} #${receipt}`,
     };
@@ -131,6 +243,9 @@ export const paymentService = {
     }
 
     const order = await cfRes.json();
+    if (!order.order_id || !order.payment_session_id) {
+      throw new ApiError(502, "CASHFREE_ORDER_FAILED", "Cashfree did not return a usable payment session.");
+    }
 
     const payment = await paymentRepository.create({
       booking_type,
@@ -147,7 +262,6 @@ export const paymentService = {
         payment_session_id: order.payment_session_id,
       },
     });
-
     return {
       order_id: order.order_id,
       cf_order_id: String(order.cf_order_id || ""),
@@ -155,14 +269,14 @@ export const paymentService = {
       amount: order.order_amount,
       currency: order.order_currency,
       payment_id: payment.id,
-      environment: env.cashfreeEnv,
+      environment: "sandbox",
     };
   },
 
   /**
    * Verifies Cashfree payment status server-to-server and marks the booking Paid.
    */
-  async verifyCashfreePayment({ order_id }) {
+  async verifyCashfreePayment({ order_id, reference, customer_phone }) {
     if (!env.cashfreeAppId || !env.cashfreeSecretKey) {
       throw new ApiError(503, "CASHFREE_NOT_CONFIGURED", "Cashfree credentials are not configured on server.");
     }
@@ -172,85 +286,11 @@ export const paymentService = {
       throw new ApiError(404, "PAYMENT_ORDER_NOT_FOUND", "Payment order record was not found.");
     }
 
-    if (payment.payment_status === "paid") {
-      return payment;
-    }
-
-    const baseUrl = getCashfreeBaseUrl();
-    const headers = {
-      "x-client-id": env.cashfreeAppId,
-      "x-client-secret": env.cashfreeSecretKey,
-      "x-api-version": env.cashfreeApiVersion || "2023-08-01",
-      Accept: "application/json",
-    };
-
-    const cfRes = await fetch(`${baseUrl}/orders/${encodeURIComponent(order_id)}`, {
-      method: "GET",
-      headers,
-    });
-
-    if (!cfRes.ok) {
-      const text = await cfRes.text();
-      throw new ApiError(502, "CASHFREE_VERIFICATION_FAILED", `Could not verify order with Cashfree: ${text}`);
-    }
-
-    const orderData = await cfRes.json();
-
-    if (orderData.order_status === "PAID") {
-      let cfPaymentId = String(orderData.cf_order_id || "");
-      let paymentDetails = null;
-
-      try {
-        const pRes = await fetch(`${baseUrl}/orders/${encodeURIComponent(order_id)}/payments`, {
-          method: "GET",
-          headers,
-        });
-        if (pRes.ok) {
-          const paymentsList = await pRes.json();
-          if (Array.isArray(paymentsList)) {
-            const successPayment = paymentsList.find((p) => p.payment_status === "SUCCESS") || paymentsList[0];
-            if (successPayment) {
-              cfPaymentId = String(successPayment.cf_payment_id || cfPaymentId);
-              paymentDetails = successPayment;
-            }
-          }
-        }
-      } catch {
-        // Best effort payment detail lookup; order_status PAID is authoritative
-      }
-
-      const paidAt = new Date().toISOString();
-      const updatedPayment = await paymentRepository.update(payment.id, {
-        cashfree_payment_id: cfPaymentId,
-        payment_status: "paid",
-        paid_at: paidAt,
-        metadata: {
-          ...payment.metadata,
-          cashfree_order_data: orderData,
-          cashfree_payment_details: paymentDetails,
-        },
-      });
-
-      if (payment.booking_id) {
-        await bookingRepository.updatePaymentStatus(payment.booking_id, "paid");
-      } else if (payment.group_booking_id) {
-        await groupBookingRepository.update(payment.group_booking_id, { payment_status: "paid" });
-      } else if (payment.tournament_registration_id) {
-        await tournamentRepository.updateRegistration(payment.tournament_registration_id, { payment_status: "paid" });
-      }
-
-      return updatedPayment;
-    }
-
-    if (orderData.order_status === "ACTIVE") {
-      throw new ApiError(400, "PAYMENT_PENDING", "Payment has not been completed yet. Please finish the payment.");
-    }
-
-    await paymentRepository.update(payment.id, {
-      payment_status: "failed",
-      metadata: { ...payment.metadata, cashfree_status: orderData.order_status },
-    });
-    throw new ApiError(400, "PAYMENT_FAILED", `Cashfree payment failed with status: ${orderData.order_status}`);
+    const record = await findLinkedRecord(payment);
+    if (!record) throw new ApiError(404, "NOT_FOUND", "The linked booking or registration was not found.");
+    assertPaymentOwner(record, { reference, customer_phone });
+    if (payment.payment_status === "paid") return payment;
+    return reconcileCashfreeOrder(payment);
   },
 
   /**
@@ -263,34 +303,8 @@ export const paymentService = {
     const payment = await paymentRepository.findByCashfreeOrderId(orderId);
     if (!payment) return null;
 
-    if (event?.type === "PAYMENT_SUCCESS_WEBHOOK" || event?.data?.order?.order_status === "PAID") {
-      const cfPaymentId = String(event?.data?.payment?.cf_payment_id || event?.data?.order?.cf_order_id || "");
-      const paidAt = new Date().toISOString();
-      const updated = await paymentRepository.update(payment.id, {
-        cashfree_payment_id: cfPaymentId,
-        payment_status: "paid",
-        paid_at: paidAt,
-        metadata: { ...payment.metadata, webhook_data: event },
-      });
-
-      if (payment.booking_id) {
-        await bookingRepository.updatePaymentStatus(payment.booking_id, "paid");
-      } else if (payment.group_booking_id) {
-        await groupBookingRepository.update(payment.group_booking_id, { payment_status: "paid" });
-      } else if (payment.tournament_registration_id) {
-        await tournamentRepository.updateRegistration(payment.tournament_registration_id, { payment_status: "paid" });
-      }
-      return updated;
-    }
-
-    if (event?.type === "PAYMENT_FAILED_WEBHOOK") {
-      return paymentRepository.update(payment.id, {
-        payment_status: "failed",
-        metadata: { ...payment.metadata, webhook_data: event },
-      });
-    }
-
-    return null;
+    if (!["PAYMENT_SUCCESS_WEBHOOK", "PAYMENT_FAILED_WEBHOOK"].includes(event?.type)) return null;
+    return reconcileCashfreeOrder(payment);
   },
 
   /**

@@ -18,7 +18,8 @@ export const env = {
   },
   cashfreeAppId: process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || "",
   cashfreeSecretKey: process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || "",
-  cashfreeEnv: (process.env.CASHFREE_ENV || process.env.CASHFREE_MODE || "sandbox").toLowerCase(),
+  cashfreeEnv: "sandbox",
+  cashfreeWebhookUrl: process.env.CASHFREE_WEBHOOK_URL || "",
   cashfreeApiVersion: process.env.CASHFREE_API_VERSION || "2023-08-01",
 };
 

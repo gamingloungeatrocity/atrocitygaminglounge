@@ -41,17 +41,22 @@ export const paymentController = {
       const timestamp = req.headers["x-webhook-timestamp"];
       const rawBody = req.rawBody || JSON.stringify(req.body);
 
-      if (signature && timestamp && env.cashfreeSecretKey) {
-        const isValid = verifyCashfreeWebhookSignature({
-          timestamp,
-          rawBody,
-          signature,
-          secret: env.cashfreeSecretKey,
-        });
+      if (!env.cashfreeSecretKey) {
+        return res.status(503).json({ success: false, message: "Cashfree webhook verification is not configured." });
+      }
+      if (!signature || !timestamp) {
+        return res.status(400).json({ success: false, message: "Missing webhook signature headers." });
+      }
 
-        if (!isValid) {
-          return res.status(400).json({ success: false, message: "Invalid webhook signature" });
-        }
+      const isValid = verifyCashfreeWebhookSignature({
+        timestamp,
+        rawBody,
+        signature,
+        secret: env.cashfreeSecretKey,
+      });
+
+      if (!isValid) {
+        return res.status(400).json({ success: false, message: "Invalid webhook signature" });
       }
 
       await paymentService.handleCashfreeWebhookEvent(req.body);

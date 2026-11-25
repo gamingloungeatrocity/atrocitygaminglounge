@@ -1,13 +1,25 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { after, before, describe, it } from "node:test";
+import { env } from "../src/config/supabase.js";
 import { createAuthenticateMiddleware } from "../src/middleware/authenticate.js";
 import { requireRole, requireStaffPermission } from "../src/middleware/authorize.js";
 import { createApp } from "../src/server.js";
-import { intervalsOverlap, parsePgRangeMs } from "../src/services/availability.service.js";
-import { verifyCashfreeWebhookSignature } from "../src/services/payment.service.js";
+import { availabilityService, intervalsOverlap, parsePgRangeMs } from "../src/services/availability.service.js";
+import {
+  cashfreeOrderMatchesPayment,
+  matchesPaymentReference,
+  paymentService,
+  verifyCashfreeWebhookSignature,
+} from "../src/services/payment.service.js";
 import { pricingService } from "../src/services/pricing.service.js";
+import { bookingRepository } from "../src/repositories/booking.repository.js";
+import { consoleRepository } from "../src/repositories/console.repository.js";
+import { groupBookingRepository } from "../src/repositories/groupBooking.repository.js";
+import { paymentRepository } from "../src/repositories/payment.repository.js";
 import { pricingRepository } from "../src/repositories/pricing.repository.js";
+import { settingsRepository } from "../src/repositories/settings.repository.js";
+import { tournamentRepository } from "../src/repositories/tournament.repository.js";
 import { mapDatabaseError } from "../src/utils/errors.js";
 
 function mockRes() {
@@ -115,6 +127,33 @@ describe("Backend Authentication & RBAC Middleware", () => {
 });
 
 describe("Booking Conflict Prevention & Range Math", () => {
+  it("preserves configured package durations below 30 minutes in availability results", async () => {
+    const originals = {
+      findAll: consoleRepository.findAll,
+      findActiveReservationsInRange: consoleRepository.findActiveReservationsInRange,
+      getSettings: settingsRepository.get,
+    };
+    consoleRepository.findAll = async () => [
+      { id: "console-ps4", slug: "ps4", name: "PlayStation 4", console_type: "PS4", status: "available" },
+    ];
+    consoleRepository.findActiveReservationsInRange = async () => [];
+    settingsRepository.get = async () => ({ opening_time: "10:00:00", closing_time: "11:00:00" });
+
+    try {
+      const result = await availabilityService.getAvailability({
+        date: "2026-12-01",
+        durationMinutes: 20,
+      });
+      assert.equal(result.durationMinutes, 20);
+      assert.equal(result.slots[0].endTime, "10:20");
+      assert.deepEqual(result.slots[0].consoles.ps4, { available: true, reason: "open" });
+    } finally {
+      consoleRepository.findAll = originals.findAll;
+      consoleRepository.findActiveReservationsInRange = originals.findActiveReservationsInRange;
+      settingsRepository.get = originals.getSettings;
+    }
+  });
+
   it("maps PostgreSQL 23P01 exclusion violation to HTTP 409 BOOKING_CONFLICT", () => {
     const mapped = mapDatabaseError({ code: "23P01", message: "conflicting key value violates exclusion constraint" });
     assert.equal(mapped?.statusCode, 409);
@@ -231,6 +270,201 @@ describe("Cashfree Webhook Signature Verification", () => {
     assert.equal(verifyCashfreeWebhookSignature({ timestamp: "1731174999", rawBody, signature: validSig, secret }), false);
     assert.equal(verifyCashfreeWebhookSignature({ timestamp, rawBody, signature: "", secret }), false);
   });
+
+  it("binds a payment to its booking reference and normalized phone number", () => {
+    const record = { booking_code: "BKG-123", customer_phone: "9025785087" };
+    assert.equal(matchesPaymentReference(record, { reference: "BKG-123", customer_phone: "+91 90257 85087" }), true);
+    assert.equal(matchesPaymentReference(record, { reference: "BKG-999", customer_phone: "9025785087" }), false);
+    assert.equal(matchesPaymentReference(record, { reference: "BKG-123", customer_phone: "9025785000" }), false);
+  });
+
+  it("rejects Cashfree order amounts or currencies that differ from the saved payment", () => {
+    assert.equal(cashfreeOrderMatchesPayment({ order_amount: 2500, order_currency: "INR" }, 2500), true);
+    assert.equal(cashfreeOrderMatchesPayment({ order_amount: 2500.01, order_currency: "INR" }, 2500), false);
+    assert.equal(cashfreeOrderMatchesPayment({ order_amount: 2500, order_currency: "USD" }, 2500), false);
+    assert.equal(cashfreeOrderMatchesPayment({ order_currency: "INR" }, 2500), false);
+  });
+});
+
+describe("Cashfree booking payment flows", () => {
+  it("creates sandbox orders using the saved PS4, PS4 Pro, group, and tournament prices", async () => {
+    const records = [
+      {
+        booking_type: "console",
+        record_id: "10000000-0000-4000-8000-000000000001",
+        reference: "BKG-PS4",
+        amount: 70,
+        record: { id: "10000000-0000-4000-8000-000000000001", booking_code: "BKG-PS4", customer_name: "Player", customer_phone: "9025785087", total_amount: 70, payment_status: "pending", booking_status: "confirmed" },
+        link: "booking_id",
+      },
+      {
+        booking_type: "console",
+        record_id: "10000000-0000-4000-8000-000000000002",
+        reference: "BKG-PS4PRO",
+        amount: 180,
+        record: { id: "10000000-0000-4000-8000-000000000002", booking_code: "BKG-PS4PRO", customer_name: "Player", customer_phone: "9025785087", total_amount: 180, payment_status: "pending", booking_status: "confirmed" },
+        link: "booking_id",
+      },
+      {
+        booking_type: "group",
+        record_id: "20000000-0000-4000-8000-000000000001",
+        reference: "WL-GROUP",
+        amount: 2500,
+        record: { id: "20000000-0000-4000-8000-000000000001", booking_code: "WL-GROUP", customer_name: "Player", customer_phone: "9025785087", total_amount: 2500, number_of_people: 24, payment_status: "pending", booking_status: "pending" },
+        link: "group_booking_id",
+      },
+      {
+        booking_type: "tournament",
+        record_id: "30000000-0000-4000-8000-000000000001",
+        reference: "TRN-REG",
+        amount: 350,
+        record: { id: "30000000-0000-4000-8000-000000000001", registration_code: "TRN-REG", participant_name: "Player", phone: "9025785087", payment_status: "pending", registration_status: "approved", tournaments: { entry_fee: 350 } },
+        link: "tournament_registration_id",
+      },
+    ];
+    const originals = {
+      cashfreeAppId: env.cashfreeAppId,
+      cashfreeSecretKey: env.cashfreeSecretKey,
+      findBooking: bookingRepository.findById,
+      findGroup: groupBookingRepository.findById,
+      findRegistration: tournamentRepository.findRegistrationById,
+      createPayment: paymentRepository.create,
+      applyStatus: paymentRepository.applyCashfreeStatus,
+      fetch: globalThis.fetch,
+    };
+    const paymentRows = [];
+    const orderPayloads = [];
+
+    env.cashfreeAppId = "test-app-id";
+    env.cashfreeSecretKey = "test-secret";
+    bookingRepository.findById = async (id) => records.find((r) => r.booking_type === "console" && r.record_id === id)?.record || null;
+    groupBookingRepository.findById = async (id) => records.find((r) => r.booking_type === "group" && r.record_id === id)?.record || null;
+    tournamentRepository.findRegistrationById = async (id) => records.find((r) => r.booking_type === "tournament" && r.record_id === id)?.record || null;
+    paymentRepository.create = async (record) => {
+      paymentRows.push(record);
+      return { id: `payment-${paymentRows.length}`, ...record };
+    };
+    paymentRepository.applyCashfreeStatus = async ({ paymentId }) => ({ id: paymentId, payment_status: "pending" });
+    globalThis.fetch = async (url, options) => {
+      assert.equal(String(url).startsWith("https://sandbox.cashfree.com/pg/orders"), true);
+      const payload = JSON.parse(options.body);
+      orderPayloads.push(payload);
+      return {
+        ok: true,
+        json: async () => ({
+          order_id: payload.order_id,
+          cf_order_id: `cf-${payload.order_id}`,
+          payment_session_id: "test-session",
+          order_amount: payload.order_amount,
+          order_currency: payload.order_currency,
+        }),
+      };
+    };
+
+    try {
+      for (const testCase of records) {
+        const order = await paymentService.createCashfreeOrder({
+          booking_type: testCase.booking_type,
+          record_id: testCase.record_id,
+          reference: testCase.reference,
+          customer_phone: "9025785087",
+          amount: 0.01,
+        });
+        const createdPayment = paymentRows[paymentRows.length - 1];
+        const payload = orderPayloads[orderPayloads.length - 1];
+        assert.equal(Number(payload.order_amount), testCase.amount);
+        assert.equal(createdPayment.amount, testCase.amount);
+        assert.equal(createdPayment[testCase.link], testCase.record_id);
+        assert.equal(order.environment, "sandbox");
+      }
+    } finally {
+      env.cashfreeAppId = originals.cashfreeAppId;
+      env.cashfreeSecretKey = originals.cashfreeSecretKey;
+      bookingRepository.findById = originals.findBooking;
+      groupBookingRepository.findById = originals.findGroup;
+      tournamentRepository.findRegistrationById = originals.findRegistration;
+      paymentRepository.create = originals.createPayment;
+      paymentRepository.applyCashfreeStatus = originals.applyStatus;
+      globalThis.fetch = originals.fetch;
+    }
+  });
+
+  it("verifies paid orders server-side and updates the linked record for each booking type", async () => {
+    const paymentCases = [
+      {
+        booking_type: "console",
+        booking_id: "10000000-0000-4000-8000-000000000001",
+        amount: 70,
+        reference: "BKG-PS4",
+        record: { booking_code: "BKG-PS4", customer_phone: "9025785087" },
+      },
+      {
+        booking_type: "group",
+        group_booking_id: "20000000-0000-4000-8000-000000000001",
+        amount: 2500,
+        reference: "WL-GROUP",
+        record: { booking_code: "WL-GROUP", customer_phone: "9025785087" },
+      },
+      {
+        booking_type: "tournament",
+        tournament_registration_id: "30000000-0000-4000-8000-000000000001",
+        amount: 350,
+        reference: "TRN-REG",
+        record: { registration_code: "TRN-REG", phone: "9025785087" },
+      },
+    ].map((item, index) => ({ ...item, id: `payment-${index + 1}`, cashfree_order_id: `cf-order-${index + 1}`, currency: "INR", payment_status: "pending" }));
+    const originals = {
+      cashfreeAppId: env.cashfreeAppId,
+      cashfreeSecretKey: env.cashfreeSecretKey,
+      findCashfreeOrder: paymentRepository.findByCashfreeOrderId,
+      findBooking: bookingRepository.findById,
+      findGroup: groupBookingRepository.findById,
+      findRegistration: tournamentRepository.findRegistrationById,
+      applyStatus: paymentRepository.applyCashfreeStatus,
+      fetch: globalThis.fetch,
+    };
+    const appliedStatuses = [];
+
+    env.cashfreeAppId = "test-app-id";
+    env.cashfreeSecretKey = "test-secret";
+    paymentRepository.findByCashfreeOrderId = async (id) => paymentCases.find((payment) => payment.cashfree_order_id === id) || null;
+    bookingRepository.findById = async (id) => paymentCases.find((payment) => payment.booking_id === id)?.record || null;
+    groupBookingRepository.findById = async (id) => paymentCases.find((payment) => payment.group_booking_id === id)?.record || null;
+    tournamentRepository.findRegistrationById = async (id) => paymentCases.find((payment) => payment.tournament_registration_id === id)?.record || null;
+    paymentRepository.applyCashfreeStatus = async ({ paymentId, paymentStatus }) => {
+      appliedStatuses.push({ paymentId, paymentStatus });
+      return { id: paymentId, payment_status: paymentStatus };
+    };
+    globalThis.fetch = async (url) => {
+      const orderId = decodeURIComponent(String(url).split("/").pop());
+      const payment = paymentCases.find((item) => item.cashfree_order_id === orderId);
+      return {
+        ok: true,
+        json: async () => ({ order_amount: payment.amount, order_currency: "INR", order_status: "PAID" }),
+      };
+    };
+
+    try {
+      for (const payment of paymentCases) {
+        const verified = await paymentService.verifyCashfreePayment({
+          order_id: payment.cashfree_order_id,
+          reference: payment.reference,
+          customer_phone: "9025785087",
+        });
+        assert.equal(verified.payment_status, "paid");
+      }
+      assert.deepEqual(appliedStatuses, paymentCases.map(({ id }) => ({ paymentId: id, paymentStatus: "paid" })));
+    } finally {
+      env.cashfreeAppId = originals.cashfreeAppId;
+      env.cashfreeSecretKey = originals.cashfreeSecretKey;
+      paymentRepository.findByCashfreeOrderId = originals.findCashfreeOrder;
+      bookingRepository.findById = originals.findBooking;
+      groupBookingRepository.findById = originals.findGroup;
+      tournamentRepository.findRegistrationById = originals.findRegistration;
+      paymentRepository.applyCashfreeStatus = originals.applyStatus;
+      globalThis.fetch = originals.fetch;
+    }
+  });
 });
 
 describe("Express REST API Security Integration", () => {
@@ -286,5 +520,25 @@ describe("Express REST API Security Integration", () => {
     const json = await res.json();
     assert.equal(res.status, 400);
     assert.equal(json.error.code, "VALIDATION_ERROR");
+  });
+
+  it("requires a booking reference and phone before a public Cashfree order can be created", async () => {
+    const res = await fetch(`${baseUrl}/api/payments/cashfree/order`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ booking_type: "console", record_id: "8a7a74f5-717c-4a14-9f81-8ecc258c2445" }),
+    });
+    const json = await res.json();
+    assert.equal(res.status, 400);
+    assert.equal(json.error.code, "VALIDATION_ERROR");
+  });
+
+  it("rejects a Cashfree webhook without signature headers", async () => {
+    const res = await fetch(`${baseUrl}/api/payments/cashfree/webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "PAYMENT_SUCCESS_WEBHOOK" }),
+    });
+    assert.ok([400, 503].includes(res.status));
   });
 });

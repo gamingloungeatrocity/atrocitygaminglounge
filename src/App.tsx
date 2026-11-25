@@ -25,9 +25,13 @@ import { StaffPortal } from "@/pages/staff/StaffPortal";
 import { BackNavigationProvider } from "@/context/backNavigation";
 import { AppErrorBoundary, ErrorPage } from "@/components/ErrorPage";
 import { PolicyPage } from "@/components/PolicyPage";
+import { loadBookingConfirmation } from "@/lib/booking-confirmation";
 
 function PublicWebsite() {
-  const [booking, setBooking] = useState<{ open: boolean; prefill: BookingPrefill }>({ open: false, prefill: {} });
+  const [booking, setBooking] = useState<{ open: boolean; prefill: BookingPrefill }>(() => ({
+    open: Boolean(loadBookingConfirmation()),
+    prefill: {},
+  }));
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
 
   const openBooking = useCallback((prefill: BookingPrefill = {}) => {

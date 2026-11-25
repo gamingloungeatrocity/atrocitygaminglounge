@@ -54,6 +54,7 @@ Run the SQL scripts in your **Supabase SQL Editor** in the following order:
 3. *(If upgrading an existing database)* `supabase/migrations/003_cashfree.sql`: Adds Cashfree columns and updates payment method constraints.
 4. `supabase/migrations/004_content_library.sql`: Adds admin-managed games, tournament cover fields, and the `lounge-covers` Storage bucket integration used by the backend.
 5. `supabase/migrations/005_remove_demo_tournaments.sql`: Removes the original demo tournament rows; admin-created tournaments are preserved.
+6. `supabase/migrations/006_cashfree_payment_status.sql`: Adds the server-only, atomic Cashfree payment status RPC used by backend verification and webhooks.
 
 ---
 
